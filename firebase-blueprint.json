@@ -1,0 +1,99 @@
+{
+  "entities": {
+    "reviewee": {
+      "title": "Reviewee",
+      "description": "Represents an enrolled reviewee candidate",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "System generated document ID"
+        },
+        "last_name": {
+          "type": "string",
+          "description": "Uppercase last name"
+        },
+        "first_name": {
+          "type": "string",
+          "description": "Uppercase first name"
+        },
+        "middle_name": {
+          "type": "string",
+          "description": "Uppercase middle name"
+        },
+        "school_name": {
+          "type": "string",
+          "description": "Uppercase high school name"
+        },
+        "pin": {
+          "type": "string",
+          "description": "Humble PIN security number"
+        },
+        "seq_id": {
+          "type": "string",
+          "description": "Continuous sequential enrollment code (e.g. SRC - 000026)"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Standard timestamp"
+        },
+        "role": {
+          "type": "string",
+          "description": "The security and functional role assigned to this user"
+        }
+      },
+      "required": ["last_name", "first_name", "school_name", "pin", "seq_id", "created_at"]
+    },
+    "counter": {
+      "title": "Counter",
+      "description": "Central atomic sequential counter state document",
+      "type": "object",
+      "properties": {
+        "count": {
+          "type": "integer",
+          "description": "Current cumulative sequence ID order count"
+        },
+        "year": {
+          "type": "integer",
+          "description": "The relevant tracker year"
+        }
+      },
+      "required": ["count", "year"]
+    },
+    "config": {
+      "title": "Config",
+      "description": "App configuration",
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": ["key", "value"]
+    }
+  },
+  "firestore": {
+    "users": {
+      "schema": {
+        "$ref": "#/entities/reviewee"
+      },
+      "description": "Highly persistent global collection of verified enrolled users/reviewees"
+    },
+    "counters": {
+      "schema": {
+        "$ref": "#/entities/counter"
+      },
+      "description": "Single-document transactional counter to generate exact gapless sequence IDs"
+    },
+    "config": {
+      "schema": {
+        "$ref": "#/entities/config"
+      },
+      "description": "Global application configuration"
+    }
+  }
+}

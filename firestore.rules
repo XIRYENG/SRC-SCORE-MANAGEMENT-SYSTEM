@@ -1,0 +1,72 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function getUserDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function userRole() {
+      return getUserDoc().data.role;
+    }
+
+    function isAdmin() {
+      return signedIn() && userRole() == "Admin";
+    }
+
+    function isStaff() {
+      return signedIn() && userRole() == "Staff";
+    }
+
+    function isAdminLike() {
+      return isAdmin() || isStaff();
+    }
+
+    function isReviewee() {
+      return signedIn() && userRole() == "Reviewee";
+    }
+
+    match /audit_logs/{id} {
+      allow create: if isAdminLike();
+      allow read: if isAdmin();
+      allow update, delete: if false;
+    }
+
+    match /notifications/{id} {
+      allow read: if signedIn() && (resource.data.recipientId == request.auth.uid || isAdmin());
+      allow create: if isAdmin();
+      allow update: if signedIn() && (resource.data.recipientId == request.auth.uid && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead', 'readAt']));
+    }
+
+    match /users/{userId} {
+      allow read: if request.auth != null && (
+        userId == request.auth.uid ||
+        resource.data.uid == request.auth.uid ||
+        resource.data.authUid == request.auth.uid ||
+        isAdminLike()
+      );
+      allow create, update: if isAdminLike() || (request.auth != null && request.auth.uid == userId);
+      allow delete: if isAdmin();
+    }
+    
+    // Counters - Public for registration logic
+    match /counters/{id} {
+      allow read, write: if true;
+    }
+
+    // Config - Public for school mappings
+    match /config/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Default
+    match /{document=**} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+  }
+}

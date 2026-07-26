@@ -1,0 +1,11 @@
+{
+  "name": "SRC Score Management System",
+  "description": "A web-based registration app via QR code with sequential ID generation",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
