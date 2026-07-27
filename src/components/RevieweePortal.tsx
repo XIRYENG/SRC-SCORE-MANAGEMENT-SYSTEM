@@ -101,7 +101,11 @@ export function RevieweePortal({ data, onLogout }: { data: RevieweeData, onLogou
 
   const handleAreaCardClick = (subjectLabel: string, subjectKey: SubjectArea) => {
     const result = calculateRevieweeArea(revieweeData, subjectKey, gradeWeights);
-    const name = `${revieweeData.first_name || ''} ${revieweeData.last_name || ''}`.trim() || "Reviewee";
+    const name = [
+      revieweeData.first_name,
+      revieweeData.middle_name,
+      revieweeData.last_name
+    ].filter(Boolean).join(' ').trim() || "Reviewee";
     setSelectedSubjectBreakdown({
       subject: subjectLabel,
       revieweeName: name,

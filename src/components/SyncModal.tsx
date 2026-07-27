@@ -2520,7 +2520,7 @@ function formatExamDates(dateStrings: string[]): string {
           is_archived: true,
           passed: true,
           archiveStatus: "passed",
-          adminName: currentUser ? `${currentUser.first_name || ''} ${currentUser.last_name || ''}`.trim() : "System",
+          adminName: currentUser ? `${currentUser.first_name || ''} ${currentUser.middle_name ? currentUser.middle_name + ' ' : ''}${currentUser.last_name || ''}`.trim() : "System",
           adminRole: (currentUser as any)?.role || "admin",
           adminUid: currentUser?.uid || "",
           adminEmail: currentUser?.email || "",
@@ -2554,7 +2554,7 @@ function formatExamDates(dateStrings: string[]): string {
       setPassConfirmUser(null);
 
       const revieweeName =
-        `${passConfirmUser?.last_name || ""}, ${passConfirmUser?.first_name || ""}`.trim() ||
+        `${passConfirmUser?.last_name || ""}, ${passConfirmUser?.first_name || ""} ${passConfirmUser?.middle_name || ""}`.trim() ||
         "Reviewee";
 
       setToastMessage({
@@ -2694,7 +2694,7 @@ function formatExamDates(dateStrings: string[]): string {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          adminName: currentUser ? `${currentUser.first_name || ''} ${currentUser.last_name || ''}`.trim() : "Admin",
+          adminName: currentUser ? `${currentUser.first_name || ''} ${currentUser.middle_name ? currentUser.middle_name + ' ' : ''}${currentUser.last_name || ''}`.trim() : "Admin",
           adminRole: currentUser?.role || "admin"
         })
       });
@@ -2731,7 +2731,7 @@ function formatExamDates(dateStrings: string[]): string {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           updates,
-          adminName: currentUser ? `${currentUser.first_name || ''} ${currentUser.last_name || ''}`.trim() : "Admin",
+          adminName: currentUser ? `${currentUser.first_name || ''} ${currentUser.middle_name ? currentUser.middle_name + ' ' : ''}${currentUser.last_name || ''}`.trim() : "Admin",
           adminRole: currentUser?.role || "admin"
         })
       });
@@ -2774,7 +2774,7 @@ function formatExamDates(dateStrings: string[]): string {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ 
               updates: [{ doc_id: targetUserId, data: entry.updateData }],
-              adminName: currentUser?.first_name ? `${currentUser.first_name} ${currentUser.last_name}` : "Admin",
+              adminName: currentUser?.first_name ? `${currentUser.first_name} ${currentUser.middle_name ? currentUser.middle_name + ' ' : ''}${currentUser.last_name}` : "Admin",
               adminRole: currentUser?.role || "admin"
             })
         });
@@ -2811,7 +2811,7 @@ function formatExamDates(dateStrings: string[]): string {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           adminId: currentUser?.seqId || "Admin",
-          adminName: currentUser ? `${currentUser.first_name} ${currentUser.last_name}` : "Admin",
+          adminName: currentUser ? `${currentUser.first_name} ${currentUser.middle_name ? currentUser.middle_name + ' ' : ''}${currentUser.last_name}` : "Admin",
           adminRole: currentUser?.role || "",
           password: "",
           year: ""
@@ -2936,7 +2936,7 @@ function formatExamDates(dateStrings: string[]): string {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           adminId: currentUser?.seqId || "Admin",
-          adminName: currentUser ? `${currentUser.first_name} ${currentUser.last_name}` : "Admin",
+          adminName: currentUser ? `${currentUser.first_name} ${currentUser.middle_name ? currentUser.middle_name + ' ' : ''}${currentUser.last_name}` : "Admin",
           adminRole: currentUser?.role || "",
           password: "",
           recordsToDelete,
@@ -2972,7 +2972,7 @@ function formatExamDates(dateStrings: string[]): string {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           adminId: currentUser?.seqId || "Admin",
-          adminName: currentUser ? `${currentUser.first_name} ${currentUser.last_name}` : "Admin",
+          adminName: currentUser ? `${currentUser.first_name} ${currentUser.middle_name ? currentUser.middle_name + ' ' : ''}${currentUser.last_name}` : "Admin",
           adminRole: currentUser?.role || ""
         })
       });

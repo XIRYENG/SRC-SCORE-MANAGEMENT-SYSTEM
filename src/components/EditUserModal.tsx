@@ -59,7 +59,7 @@ export const EditUserModal: React.FC<EditUserModalProps> = ({ user, isOpen, onCl
         <div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-xl text-center">
             <AlertTriangle className="mx-auto text-amber-500 mb-4" size={48} />
             <h2 className="text-lg font-extrabold text-slate-900 mb-2">Confirm Changes</h2>
-            <p className="text-sm text-slate-600 mb-6">Are you sure you want to save these changes for {formData.firstName} {formData.lastName}?</p>
+            <p className="text-sm text-slate-600 mb-6">Are you sure you want to save these changes for {formData.firstName} {formData.middleName ? formData.middleName + ' ' : ''}{formData.lastName}?</p>
             <div className="flex gap-3">
                 <button type="button" disabled={isSaving} onClick={() => setIsConfirming(false)} className="flex-1 bg-slate-100 text-slate-700 font-bold py-2.5 rounded-xl hover:bg-slate-200 disabled:opacity-50">Cancel</button>
                 <button type="button" disabled={isSaving} onClick={handleConfirm} className="flex-1 bg-teal-600 text-white font-bold py-2.5 rounded-xl hover:bg-teal-700 disabled:opacity-50">{isSaving ? 'Saving...' : 'Confirm'}</button>

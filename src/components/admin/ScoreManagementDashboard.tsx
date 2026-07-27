@@ -14,6 +14,8 @@ import { getCanonicalFullName } from '../../utils/nameNormalization';
 import { getSubjectsByArea, MajorAreaCode } from '../../config/criminologyCurriculum';
 import { DailyEvaluationRevieweeMatrix, DailyEvalRevieweeRow } from '../score-management/DailyEvaluationRevieweeMatrix';
 
+import { isValidUserRecord } from '../../services/userIdentityResolver';
+
 type ScoreManagementDashboardProps = {
   onViewDetails?: (user: RevieweeData) => void;
   onOpenUploadModal?: () => void;
@@ -161,7 +163,22 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
 
   // Filter valid reviewees
   const allReviewees = useMemo(() => {
-    return allUsers.filter((u: RevieweeData) => u.role === 'Reviewee');
+    return allUsers.filter((u: RevieweeData) => {
+      const uAny = u as any;
+      const status = String(uAny.accountStatus || uAny.status || '').toLowerCase();
+      
+      // Exclude deleted or merged accounts
+      if (status === 'merged' || status === 'deleted' || uAny.isDeleted || uAny.deleted || uAny.is_deleted) {
+        return false;
+      }
+      
+      // Exclude invalid records
+      if (!isValidUserRecord(u)) {
+        return false;
+      }
+
+      return u.role === 'Reviewee';
+    });
   }, [allUsers]);
 
   // Aggregate options for filters
@@ -225,7 +242,7 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
     const filtered = allReviewees.filter((u: RevieweeData) => {
       const uAny = u as any;
       const matchesSearch = !searchQuery || 
-        `${u.first_name || ''} ${u.last_name || ''}`.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        `${u.first_name || ''} ${u.middle_name ? u.middle_name + ' ' : ''}${u.last_name || ''}`.toLowerCase().includes(searchQuery.toLowerCase()) ||
         String(u.id_number || '').toLowerCase().includes(searchQuery.toLowerCase());
       
       const matchesSchool = selectedSchool === 'All Schools' || (u.school_name || uAny.schoolName) === selectedSchool;
@@ -291,8 +308,8 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
       if (sortBy === 'score_desc') return b.rating - a.rating;
       if (sortBy === 'score_asc') return a.rating - b.rating;
       
-      const nameA = `${a.user.last_name || ''} ${a.user.first_name || ''}`.trim().toLowerCase();
-      const nameB = `${b.user.last_name || ''} ${b.user.first_name || ''}`.trim().toLowerCase();
+      const nameA = `${a.user.last_name || ''} ${a.user.first_name || ''} ${a.user.middle_name || ''}`.trim().toLowerCase();
+      const nameB = `${b.user.last_name || ''} ${b.user.first_name || ''} ${b.user.middle_name || ''}`.trim().toLowerCase();
       
       if (sortBy === 'name_asc') return nameA.localeCompare(nameB);
       if (sortBy === 'name_desc') return nameB.localeCompare(nameA);

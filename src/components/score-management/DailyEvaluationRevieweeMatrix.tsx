@@ -6,6 +6,8 @@ import { calculateDailyEvaluationAggregate } from '../../lib/dailyEvaluationCalc
 import { RevieweeData } from '../../types';
 import { CompactEditableScoreCell } from '../CompactEditableScoreCell';
 
+import { getCanonicalFullName } from '../../utils/nameNormalization';
+
 export type DailyEvalRevieweeRow = {
   user: RevieweeData;
   subjectScores: Record<string, { earned: number | null; possible: number | null }>;
@@ -33,9 +35,33 @@ export function DailyEvaluationRevieweeMatrix({
 }) {
   const [activeTooltip, setActiveTooltip] = useState<string | null>(null);
   const [activeMenuUserId, setActiveMenuUserId] = useState<string | null>(null);
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc' | null>('asc');
 
   const subjects = getSubjectsByArea(areaCode);
-  const allSelected = revieweeRows.length > 0 && selectedUserIds.length === revieweeRows.length;
+
+  const getFormattedName = (user: RevieweeData) => {
+    const last = (user.last_name || '').trim();
+    const first = (user.first_name || '').trim();
+    const middle = (user.middle_name || '').trim();
+    const middleInitial = middle ? `${middle.charAt(0)}.` : '';
+    return `${last}, ${first} ${middleInitial}`.trim().replace(/\s+/g, ' ');
+  };
+
+  const sortedRows = React.useMemo(() => {
+    if (!sortDirection) return revieweeRows;
+    return [...revieweeRows].sort((a, b) => {
+      const nameA = getFormattedName(a.user).toLowerCase();
+      const nameB = getFormattedName(b.user).toLowerCase();
+      if (sortDirection === 'asc') return nameA.localeCompare(nameB);
+      return nameB.localeCompare(nameA);
+    });
+  }, [revieweeRows, sortDirection]);
+
+  const allSelected = sortedRows.length > 0 && selectedUserIds.length === sortedRows.length;
+
+  const toggleSort = () => {
+    setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+  };
 
   return (
     <div className="space-y-3">
@@ -72,7 +98,20 @@ export function DailyEvaluationRevieweeMatrix({
                 ID Number
               </th>
               <th className="px-3 py-3 sticky left-[150px] bg-slate-100 z-30 min-w-[180px] border-r border-slate-200 shadow-[2px_0_4px_rgba(0,0,0,0.04)]">
-                Reviewee
+                <button 
+                  type="button" 
+                  onClick={toggleSort}
+                  className="flex items-center gap-1.5 hover:text-teal-700 transition-colors group cursor-pointer w-full text-left"
+                >
+                  Reviewee
+                  <div className={`p-0.5 rounded transition-colors ${sortDirection ? 'bg-teal-50 text-teal-600' : 'text-slate-300'}`}>
+                    {sortDirection === 'desc' ? (
+                      <ChevronDown size={14} className="rotate-180" />
+                    ) : (
+                      <ChevronDown size={14} />
+                    )}
+                  </div>
+                </button>
               </th>
 
               {/* Dynamic Subject Headers */}
@@ -120,14 +159,14 @@ export function DailyEvaluationRevieweeMatrix({
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 bg-white">
-            {revieweeRows.length === 0 ? (
+            {sortedRows.length === 0 ? (
               <tr>
                 <td colSpan={subjects.length + 7} className="px-6 py-12 text-center text-slate-400 text-xs font-semibold">
                   No reviewees found for the selected filter criteria.
                 </td>
               </tr>
             ) : (
-              revieweeRows.map(({ user, subjectScores, isPublished }) => {
+              sortedRows.map(({ user, subjectScores, isPublished }) => {
                 const userAny = user as any;
                 const userId = userAny.id || user.uid || '';
                 const isSelected = selectedUserIds.includes(userId);
@@ -167,7 +206,7 @@ export function DailyEvaluationRevieweeMatrix({
 
                     {/* Reviewee Name */}
                     <td className="px-3 py-3 sticky left-[150px] bg-white z-20 font-bold text-slate-900 border-r border-slate-100 shadow-[2px_0_4px_rgba(0,0,0,0.04)] truncate max-w-[200px]">
-                      {`${user.last_name || ''}, ${user.first_name || ''}`.trim() || user.name || 'Unnamed Reviewee'}
+                      {getFormattedName(user) || user.name || 'Unnamed Reviewee'}
                     </td>
 
                     {/* Subject Cells */}

@@ -73,7 +73,7 @@ export const LeaderboardDashboard: React.FC<LeaderboardDashboardProps> = ({ user
     // Filter by search query
     return sorted.filter(u => {
       if (!searchQuery) return true;
-      const fullName = `${u.first_name || ''} ${u.last_name || ''}`.toLowerCase();
+      const fullName = `${u.first_name || ''} ${u.middle_name ? u.middle_name + ' ' : ''}${u.last_name || ''}`.toLowerCase();
       const idStr = String(u.seq_id || u.id_number || '').toLowerCase();
       return fullName.includes(searchQuery.toLowerCase()) || idStr.includes(searchQuery.toLowerCase());
     });
@@ -108,7 +108,7 @@ export const LeaderboardDashboard: React.FC<LeaderboardDashboardProps> = ({ user
                 
                 <div>
                   <h3 className="text-lg font-black tracking-tight w-full">
-                    {user.first_name} {user.last_name}
+                    {user.first_name} {user.middle_name ? user.middle_name + ' ' : ''}{user.last_name}
                   </h3>
                   <p className="text-[10px] uppercase font-bold tracking-widest opacity-80">
                     {user.school_name || 'No School'}
@@ -254,11 +254,11 @@ export const LeaderboardDashboard: React.FC<LeaderboardDashboardProps> = ({ user
                             rank === 3 ? 'bg-amber-50 text-amber-900' : 
                             'bg-slate-50 dark:bg-slate-800 text-slate-400'
                           }`}>
-                            {user.first_name?.[0]}{user.last_name?.[0]}
+                            {user.first_name?.[0]}{user.middle_name?.[0] || user.last_name?.[0]}
                           </div>
                           <div>
                             <p className="text-sm font-black text-slate-900 dark:text-slate-100 uppercase tracking-tight group-hover:text-blue-600 transition-colors">
-                              {user.last_name}, {user.first_name}
+                              {user.last_name}, {user.first_name} {user.middle_name || ''}
                             </p>
                             <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-0.5">{user.school_name || 'No School'}</p>
                           </div>

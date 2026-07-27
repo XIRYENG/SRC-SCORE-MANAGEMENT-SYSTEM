@@ -238,7 +238,7 @@ export function StaffPortal({ data, onLogout, onOpenSyncModal, syncProps }: Staf
   const recentReviewees = reviewees.slice(0, 5).map(u => ({
     id: u.doc_id || u.seqId,
     seqId: u.seqId || '—',
-    name: `${u.first_name || ''} ${u.last_name || ''}`.trim(),
+    name: `${u.first_name || ''} ${u.middle_name ? u.middle_name + ' ' : ''}${u.last_name || ''}`.trim(),
     evaluation: 'Mock Exam 4',
     area: 'CLJ',
     score: '94%',

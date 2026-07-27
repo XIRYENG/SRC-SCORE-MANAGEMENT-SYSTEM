@@ -13,6 +13,8 @@ import { AnimatedSelect } from './ui/animated-select';
 import { UXDashboardCards } from './UXDashboardCards';
 import { EmptyState } from './sync-modal-tabs/EmptyState';
 
+import { isValidUserRecord } from '../services/userIdentityResolver';
+
 interface AnalysisDashboardProps {
   users: any[];
   importReport?: { unmatchedEntries: any[], missingUsers: any[] } | null;
@@ -100,7 +102,11 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
   }, [importReport, selectedCategory, selectedSubject]);
 
   const missingUsersForSelectedScore = useMemo(() => {
-    const activeUsers = users.filter(u => !u.is_archived);
+    const activeUsers = users.filter(u => {
+      const status = String(u.accountStatus || u.status || '').toLowerCase();
+      const isDeleted = status === 'merged' || status === 'deleted' || u.isDeleted || u.deleted || u.is_deleted;
+      return !u.is_archived && !isDeleted && isValidUserRecord(u);
+    });
 
     return activeUsers.filter(u => {
       const value = u[scoreField];
