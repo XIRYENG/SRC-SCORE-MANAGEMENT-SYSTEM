@@ -21,6 +21,8 @@ type ScoreManagementDashboardProps = {
   onOpenUploadModal?: () => void;
   onOpenSyncModal?: (section?: any, tab?: any) => void;
   currentUser?: RevieweeData | null;
+  scoreFolderId?: string;
+  scoreFolderName?: string;
 };
 
 const SUBJECTS_BY_AREA: Record<string, { code: string; title: string }[]> = {
@@ -275,7 +277,7 @@ function getUnifiedScore(user: any, category: string, subject: string, selectedD
   };
 }
 
-export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onOpenSyncModal, currentUser }: ScoreManagementDashboardProps) {
+export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onOpenSyncModal, currentUser, scoreFolderId, scoreFolderName }: ScoreManagementDashboardProps) {
   const { allUsers, loading } = useFirestoreUsers();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('Daily Evaluation');
@@ -416,21 +418,25 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
   const allReviewees = useMemo(() => {
     return allUsers.filter((u: RevieweeData) => {
       const uAny = u as any;
-      const status = String(uAny.accountStatus || uAny.status || '').toLowerCase();
-      
-      // Exclude deleted or merged accounts
-      if (status === 'merged' || status === 'deleted' || uAny.isDeleted || uAny.deleted || uAny.is_deleted) {
-        return false;
+      const status = String(uAny.accountStatus || uAny.status || "").toLowerCase();
+      if (status === "merged" || status === "deleted" || uAny.isDeleted || uAny.deleted || uAny.is_deleted) return false;
+      if (!isValidUserRecord(u)) return false;
+      return u.role === "Reviewee";
+    }).map((u: RevieweeData) => {
+      let filteredRecords = u.assessmentRecords;
+      if (filteredRecords) {
+        const newRecords: Record<string, any> = {};
+        let hasRecords = false;
+        Object.entries(filteredRecords).forEach(([key, record]: [string, any]) => {
+          if (scoreFolderId) {
+            if (record.scoreFolderId === scoreFolderId) { newRecords[key] = record; hasRecords = true; }
+          } else { newRecords[key] = record; hasRecords = true; }
+        });
+        return { ...u, assessmentRecords: hasRecords ? newRecords : {} };
       }
-      
-      // Exclude invalid records
-      if (!isValidUserRecord(u)) {
-        return false;
-      }
-
-      return u.role === 'Reviewee';
+      return u;
     });
-  }, [allUsers]);
+  }, [allUsers, scoreFolderId]);
 
   // Dynamic options based on actual records & branch sources
   const { categories, dates, schools, branches } = useMemo(() => {

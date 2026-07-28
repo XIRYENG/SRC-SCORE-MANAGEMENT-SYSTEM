@@ -16,6 +16,38 @@ export interface Notification {
   readAt?: any;
 }
 
+export type ScoreFolderType = 
+  | 'phase_1'
+  | 'phase_2'
+  | 'phase_3'
+  | 'marathon'
+  | 'final_coaching'
+  | 'pre_board_series'
+  | 'custom';
+
+export interface ScoreFolder {
+  id: string;
+  name: string;
+  normalizedName: string;
+  type: ScoreFolderType;
+  description?: string;
+  startDate: any;
+  endDate: any | null;
+  publicationStatus: 'published' | 'hidden';
+  isArchived: boolean;
+  includeInReadiness: boolean;
+  readinessWeight?: number;
+  displayOrder?: number;
+  createdBy: string;
+  createdAt: any;
+  updatedBy: string;
+  updatedAt: any;
+  archivedAt?: any;
+  archivedBy?: string;
+  restoredAt?: any;
+  restoredBy?: string;
+}
+
 export interface RevieweeData {
   seqId: string;
   seq_id?: string;

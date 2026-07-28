@@ -55,7 +55,7 @@ import { BoardSubjectAreasSection } from './BoardSubjectAreasSection';
 import { AreaPerformanceModal } from './performance/AreaPerformanceModal';
 import { AdminSummaryCard } from './admin/AdminSummaryCard';
 import { AdminPageHeader } from './admin/AdminPageHeader';
-import { ScoreManagementDashboard } from './admin/ScoreManagementDashboard';
+import { ScoreManagementWrapper } from './admin/ScoreManagementWrapper';
 const SIDEBAR_ITEMS = [
   { key: "dashboard", label: "Dashboard", icon: <LayoutDashboard size={18} />, adminOnly: false },
   { key: "profile", label: "My Profile", icon: <User size={18} />, adminOnly: false },
@@ -665,7 +665,7 @@ export function AdminPortal({ data, onLogout, onOpenSyncModal, syncProps }: Admi
       )}
 
       {activeTab === 'score-management' && (
-        <ScoreManagementDashboard 
+        <ScoreManagementWrapper 
           onOpenSyncModal={onOpenSyncModal}
           currentUser={userData}
         />

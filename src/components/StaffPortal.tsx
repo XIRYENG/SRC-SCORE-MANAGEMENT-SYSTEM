@@ -45,7 +45,7 @@ import { calculateAreaDashboardData, calculateRevieweeArea } from '../utils/calc
 import { getResolvedScore } from '../utils/scoreFieldResolver';
 import { BoardSubjectAreasSection } from './BoardSubjectAreasSection';
 import { AreaPerformanceModal } from './performance/AreaPerformanceModal';
-import { ScoreManagementDashboard } from './admin/ScoreManagementDashboard';
+import { ScoreManagementWrapper } from './admin/ScoreManagementWrapper';
 
 const STAFF_MENU_ITEMS = [
   { key: "dashboard", label: "Dashboard", icon: <LayoutDashboard size={18} /> },
@@ -424,7 +424,7 @@ export function StaffPortal({ data, onLogout, onOpenSyncModal, syncProps }: Staf
       )}
 
       {activeTab === 'upload-scores' && (
-        <ScoreManagementDashboard 
+        <ScoreManagementWrapper 
           onOpenSyncModal={onOpenSyncModal}
           currentUser={userData}
         />
