@@ -198,7 +198,7 @@ export function SimpleTable({
 
         <tbody>
           {rows.map((row, index) => (
-            <tr key={row.id || index} className="border-b border-slate-100 last:border-0">
+            <tr key={row.id ? `${row.id}_${index}` : `row_${index}`} className="border-b border-slate-100 last:border-0">
               {columns.map((col) => (
                 <td key={col.key} className={`px-3 ${compact ? 'py-2' : 'py-3'} text-sm`}>
                   {col.render(row)}

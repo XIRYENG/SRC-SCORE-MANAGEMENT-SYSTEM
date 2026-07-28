@@ -17,6 +17,7 @@
   "dependencies": {
     "@floating-ui/react": "^0.27.20",
     "@google/genai": "^1.29.0",
+    "@radix-ui/react-select": "^2.3.7",
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",
     "@yudiel/react-qr-scanner": "^2.6.0",

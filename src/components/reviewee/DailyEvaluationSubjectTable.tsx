@@ -53,8 +53,8 @@ export function DailyEvaluationSubjectTable({
   const overallAggregate = calculateDailyEvaluationAggregate(allScoreEntries);
 
   return (
-    <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
-      <table className="w-full text-xs text-left text-slate-700">
+    <div className="relative w-full overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+      <table className="w-full min-w-[820px] text-xs text-left text-slate-700">
         <thead className="text-[10px] text-slate-300 uppercase font-black bg-slate-900 border-b border-slate-800">
           <tr>
             <th rowSpan={2} className="px-4 py-3 sticky left-0 bg-slate-900 z-20 min-w-[240px] shadow-[1px_0_0_0_rgba(255,255,255,0.1)]">

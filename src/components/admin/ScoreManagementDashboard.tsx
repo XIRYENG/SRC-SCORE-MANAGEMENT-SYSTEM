@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Search, Download, Printer, Filter, ChevronDown, ChevronUp, Eye, CheckCircle2, FileText, Upload, ChevronLeft, ChevronRight, Check, MoreVertical, X, Pencil, Plus } from 'lucide-react';
 import { useFirestoreUsers } from '../../hooks/useFirestoreUsers';
@@ -9,12 +9,12 @@ import { ScoreRecord } from '../../utils/scoreParser';
 import { RevieweeData } from '../../types';
 import { CompactEditableScoreCell } from '../CompactEditableScoreCell';
 import { firestoreDb } from '../../utils/firebaseClient';
-import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, updateDoc, serverTimestamp, collection, query, onSnapshot } from 'firebase/firestore';
 import { getCanonicalFullName } from '../../utils/nameNormalization';
 import { getSubjectsByArea, MajorAreaCode } from '../../config/criminologyCurriculum';
 import { DailyEvaluationRevieweeMatrix, DailyEvalRevieweeRow } from '../score-management/DailyEvaluationRevieweeMatrix';
-
-import { isValidUserRecord } from '../../services/userIdentityResolver';
+import { isValidUserRecord, resolveCanonicalUserIdentity, compareUsersAlphabetically, formatFormalName } from '../../services/userIdentityResolver';
+import { AnimatedSelect } from '../ui/animated-select';
 
 type ScoreManagementDashboardProps = {
   onViewDetails?: (user: RevieweeData) => void;
@@ -38,6 +38,8 @@ const SUBJECTS_BY_AREA: Record<string, { code: string; title: string }[]> = {
     { code: "LEA 2", title: "Comparative Models in Policing" },
     { code: "LEA 3", title: "Introduction to Industrial Security Concepts" },
     { code: "LEA 4", title: "Law Enforcement Operation and Planning with Crime Mapping" },
+    { code: "CLFM 1", title: "Character Formation, Nationalism, and Patriotism" },
+    { code: "CLFM 2", title: "Leadership, Decision Making, Management, and Administration" },
   ],
   "CDI": [
     { code: "CDI 1", title: "Fundamentals of Criminal Investigation and Intelligence" },
@@ -74,6 +76,205 @@ const SUBJECTS_BY_AREA: Record<string, { code: string; title: string }[]> = {
   ]
 };
 
+function normalizeDateString(dateStr: any): string {
+  if (!dateStr) return '';
+  const trimmed = String(dateStr).trim();
+  try {
+    const d = new Date(trimmed);
+    if (!isNaN(d.getTime())) {
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const dd = String(d.getDate()).padStart(2, '0');
+      return `${yyyy}-${mm}-${dd}`;
+    }
+  } catch (e) {}
+  return trimmed;
+}
+
+function normalizeIndividualSubjectCode(subj: string): string {
+  return String(subj || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "")
+    .trim();
+}
+
+function parseOptionalNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function getUnifiedScore(user: any, category: string, subject: string, selectedDate: string) {
+  const catKey = normalizeScoreCategory(category);
+  const isDailyEval = catKey === 'dailyevaluation';
+
+  let totalEarned = 0;
+  let totalPossible = 0;
+  let hasMatchingRecords = false;
+
+  // 1. Check assessmentRecords (the primary persistent record storage)
+  if (user.assessmentRecords && typeof user.assessmentRecords === 'object') {
+    Object.values(user.assessmentRecords).forEach((r: any) => {
+      if (!r || typeof r !== 'object') return;
+
+      const recordCatKey = normalizeScoreCategory(r.category || '');
+      if (recordCatKey !== catKey) return;
+
+      // Filter by date if specified
+      if (selectedDate !== 'All Dates') {
+        const rDate = normalizeDateString(r.date || r.createdAt);
+        const sDate = normalizeDateString(selectedDate);
+        if (rDate !== sDate) return;
+      }
+
+      // Match subject
+      const recordSubj = r.subject || r.area || r.subjectCode || r.subject_code || '';
+      const recordSubjNormalized = isDailyEval 
+        ? normalizeIndividualSubjectCode(recordSubj)
+        : normalizeScoreSubject(recordSubj);
+
+      const targetSubjNormalized = isDailyEval
+        ? normalizeIndividualSubjectCode(subject)
+        : normalizeScoreSubject(subject);
+
+      if (recordSubjNormalized === targetSubjNormalized) {
+        const score = parseOptionalNumber(r.score ?? r.earnedPoints ?? r.rawScore);
+        const total = parseOptionalNumber(r.totalScore ?? r.totalItems ?? r.possiblePoints ?? r.perfectScore);
+        if (score !== null) {
+          totalEarned += score;
+          totalPossible += (total !== null && total > 0 ? total : 100);
+          hasMatchingRecords = true;
+        }
+      }
+    });
+  }
+
+  if (hasMatchingRecords) {
+    return {
+      earnedScore: totalEarned,
+      possiblePoints: totalPossible,
+    };
+  }
+
+  // 2. Fallback to scoresByDate if selectedDate is specified or "All Dates"
+  if (user.scoresByDate && typeof user.scoresByDate === 'object') {
+    const entries = Object.values(user.scoresByDate).filter((entry: any) => {
+      if (!entry || typeof entry !== "object") return false;
+
+      const entryCat = String(entry.category || "").toLowerCase();
+      const entryCatKey = normalizeScoreCategory(entry.categoryKey || entryCat);
+      if (entryCatKey !== catKey && !entryCat.includes(catKey)) return false;
+
+      if (selectedDate !== 'All Dates') {
+        const eDate = normalizeDateString(entry.date || entry.updatedAt);
+        const sDate = normalizeDateString(selectedDate);
+        if (eDate !== sDate) return false;
+      }
+
+      const entrySubjKey = normalizeScoreSubject(entry.subject || entryCat);
+      const targetSubjKey = normalizeScoreSubject(subject);
+      const subjMatches =
+        entrySubjKey === targetSubjKey ||
+        entryCat.includes(targetSubjKey) ||
+        String(entry.subject || "").toLowerCase().includes(targetSubjKey);
+
+      return subjMatches;
+    });
+
+    if (entries.length > 0) {
+      let subEarned = 0;
+      let subPossible = 0;
+      let valid = false;
+      entries.forEach((entry: any) => {
+        const earned = parseOptionalNumber(entry.earnedPoints ?? entry.rawScore ?? entry.score);
+        const possible = parseOptionalNumber(entry.possiblePoints ?? entry.totalItems);
+        if (earned !== null) {
+          subEarned += earned;
+          subPossible += (possible !== null && possible > 0 ? possible : 100);
+          valid = true;
+        }
+      });
+      if (valid) {
+        return {
+          earnedScore: subEarned,
+          possiblePoints: subPossible,
+        };
+      }
+    }
+  }
+
+  // 3. Fallback to flat fields ONLY if selectedDate is "All Dates"
+  if (selectedDate === 'All Dates') {
+    const scoreField = getScoreFieldName(category, subject);
+    let flatFieldKeys: string[] = [scoreField];
+    const subjKey = normalizeScoreSubject(subject);
+    if (catKey === "preboard") {
+      flatFieldKeys = [`preboard_${subjKey}`, `score_${subjKey}_preboard`];
+    } else if (catKey === "pretest") {
+      flatFieldKeys = [`pretest_${subjKey}`, `score_${subjKey}_pretest`, `score_${subjKey}`];
+    } else if (catKey === "posttest") {
+      flatFieldKeys = [`post_${subjKey}`, `posttest_${subjKey}`, `score_${subjKey}_posttest`, `score_${subjKey}_post`];
+    } else if (catKey === "quiz") {
+      flatFieldKeys = [`score_${subjKey}_quiz`, `score_${subjKey}_quizzes`, `quiz_${subjKey}`];
+    } else if (catKey === "dailyevaluation") {
+      flatFieldKeys = [
+        `score_${subjKey}_dailyevaluation`,
+        `score_${subjKey}_evaluation`,
+        `score_${subjKey}_daily_evaluation`,
+        `score_clj_dailyevaluation`,
+        `score_${subjKey}_daily`
+      ];
+    } else if (catKey === "removal") {
+      flatFieldKeys = [`score_${subjKey}_removal`, `score_removal_${subjKey}`];
+    } else if (catKey === "diagnostic") {
+      flatFieldKeys = [`diag_${subjKey}`, `diagnostic_${subjKey}`, `score_${subjKey}_diagnostic`];
+    }
+
+    let earnedScore: number | null = null;
+    for (const fk of flatFieldKeys) {
+      const val = user?.[fk];
+      if (val !== undefined && val !== null && String(val).trim() !== "") {
+        const num = Number(val);
+        if (Number.isFinite(num)) {
+          earnedScore = num;
+          break;
+        }
+      }
+    }
+
+    if (earnedScore !== null) {
+      const metadataKey = `${catKey}_${subjKey}`;
+      const latestRecord =
+        user?.latestScores?.[metadataKey] ??
+        user?.latestScores?.[catKey] ??
+        user?.manualScores?.[metadataKey];
+
+      const possiblePoints =
+        parseOptionalNumber(
+          latestRecord?.possiblePoints ??
+            latestRecord?.totalItems ??
+            latestRecord?.perfectScore ??
+            latestRecord?.maxScore ??
+            user?.scoreMetadata?.[metadataKey]?.possiblePoints ??
+            user?.[`possible_points_${subjKey}`] ??
+            user?.[`total_items_${subjKey}`]
+        ) ?? 100;
+
+      return {
+        earnedScore,
+        possiblePoints: possiblePoints > 0 ? possiblePoints : 100
+      };
+    }
+  }
+
+  return {
+    earnedScore: null,
+    possiblePoints: 0
+  };
+}
+
 export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onOpenSyncModal, currentUser }: ScoreManagementDashboardProps) {
   const { allUsers, loading } = useFirestoreUsers();
   const [searchQuery, setSearchQuery] = useState('');
@@ -82,19 +283,69 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
   const [selectedSchool, setSelectedSchool] = useState('All Schools');
   const [selectedBranch, setSelectedBranch] = useState('All Branches');
   const [selectedMajorArea, setSelectedMajorArea] = useState('CLJ');
-  const [sortBy, setSortBy] = useState('score_desc');
-  const [currentPage, setCurrentPage] = useState(1);
+  const [sortField, setSortField] = useState('name');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const [showFilters, setShowFilters] = useState(false);
-  const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
-  const [showDateDropdown, setShowDateDropdown] = useState(false);
-  const [showMajorAreaDropdown, setShowMajorAreaDropdown] = useState(false);
-  const [showSchoolDropdown, setShowSchoolDropdown] = useState(false);
-  const [showBranchDropdown, setShowBranchDropdown] = useState(false);
-  const [showSortByDropdown, setShowSortByDropdown] = useState(false);
-  const itemsPerPage = 15;
   const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
 
+  // Firestore branches collection state
+  const [firestoreBranches, setFirestoreBranches] = useState<{ id: string; name: string }[]>([]);
+  const [branchesLoading, setBranchesLoading] = useState(true);
+  const [branchesError, setBranchesError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let unsub: (() => void) | undefined;
+    const loadBranches = async () => {
+      try {
+        if (!firestoreDb) {
+          setBranchesLoading(false);
+          return;
+        }
+        const q = query(collection(firestoreDb, "branches"));
+        unsub = onSnapshot(
+          q,
+          (snapshot) => {
+            const loaded = snapshot.docs.map(docSnap => {
+              const data = docSnap.data();
+              const rawName = data.name ?? data.branchName ?? data.branch ?? data.label ?? data.title ?? docSnap.id;
+              return {
+                id: docSnap.id,
+                name: String(rawName).trim()
+              };
+            }).filter(b => Boolean(b.name));
+            setFirestoreBranches(loaded);
+            setBranchesLoading(false);
+          },
+          (err) => {
+            console.warn("Unable to load branches collection from Firestore:", err);
+            setBranchesError("Unable to load branch options");
+            setBranchesLoading(false);
+          }
+        );
+      } catch (err: any) {
+        console.warn("Error initializing branch query:", err);
+        setBranchesError("Unable to load branch options");
+        setBranchesLoading(false);
+      }
+    };
+    loadBranches();
+    return () => {
+      if (unsub) unsub();
+    };
+  }, []);
+
   const isDailyEvalCategory = normalizeScoreCategory(selectedCategory) === 'dailyevaluation';
+
+  React.useEffect(() => {
+    if (isDailyEvalCategory && selectedMajorArea === 'All Areas') {
+      setSelectedMajorArea('CLJ');
+    }
+  }, [selectedCategory, selectedMajorArea, isDailyEvalCategory]);
+
+  React.useEffect(() => {
+    // Scroll reset could happen here if we used a ref for the scrollable container,
+    // but the list will re-render naturally.
+  }, [selectedCategory, selectedDate, selectedSchool, selectedBranch, selectedMajorArea, searchQuery, sortField, sortDirection]);
 
   const [editingScoreCell, setEditingScoreCell] = useState<{
     user: any;
@@ -181,12 +432,12 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
     });
   }, [allUsers]);
 
-  // Aggregate options for filters
+  // Dynamic options based on actual records & branch sources
   const { categories, dates, schools, branches } = useMemo(() => {
     const cats = new Set<string>();
     const dts = new Set<string>();
     const schs = new Set<string>();
-    const brs = new Set<string>();
+    const branchMap = new Map<string, string>(); // lowercase -> formatted display name
 
     cats.add('Diagnostic');
     cats.add('Pretest');
@@ -196,15 +447,68 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
     cats.add('Removal');
     cats.add('Preboard');
 
-    allReviewees.forEach((u: RevieweeData) => {
-      const uAny = u as any;
-      if (u.school_name || uAny.schoolName) schs.add(u.school_name || uAny.schoolName || '');
-      if (uAny.branch) brs.add(uAny.branch);
+    // Standard Samaritan Review Center default branches
+    const DEFAULT_SRC_BRANCHES = [
+      "Iligan City",
+      "Lala/Maranding",
+      "Labason",
+      "Valencia",
+      "Balingasag",
+      "No Branch"
+    ];
+    DEFAULT_SRC_BRANCHES.forEach(b => {
+      branchMap.set(b.toLowerCase(), b);
+    });
+
+    // Add branches from Firestore collection
+    firestoreBranches.forEach(b => {
+      if (b.name) {
+        const key = b.name.toLowerCase();
+        if (!branchMap.has(key)) {
+          branchMap.set(key, b.name);
+        }
+      }
+    });
+
+    // Add branches and schools from all users & reviewees
+    allUsers.forEach((u: any) => {
+      const canonical = resolveCanonicalUserIdentity(u);
       
+      const sch = (u.school_name || u.schoolName || u.school || canonical.school || '').trim();
+      if (sch) schs.add(sch);
+
+      const rawBranch =
+        canonical.branch ||
+        u.branch ||
+        u.branchName ||
+        u.branch_name ||
+        u.reviewBranch ||
+        u.review_branch ||
+        u.assignedBranch ||
+        u.schoolBranch ||
+        u.reviewCenterBranch ||
+        '';
+      const name = String(rawBranch).trim();
+      if (name && name !== '—' && name !== '-' && name !== 'N/A') {
+        const key = name.toLowerCase();
+        if (!branchMap.has(key)) {
+          branchMap.set(key, name);
+        }
+      }
+    });
+
+    allReviewees.forEach((u: RevieweeData) => {
       const records = Object.values(u.assessmentRecords || {}) as ScoreRecord[];
       records.forEach((r: ScoreRecord) => {
-        if (r.category) cats.add(r.category);
-        if (r.date) dts.add(r.date);
+        if (r.category) {
+          cats.add(r.category);
+          if (normalizeScoreCategory(r.category) === normalizeScoreCategory(selectedCategory)) {
+            if (r.date) {
+              const normDate = normalizeDateString(r.date);
+              if (normDate) dts.add(normDate);
+            }
+          }
+        }
       });
     });
 
@@ -212,9 +516,15 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
       categories: Array.from(cats).sort(),
       dates: Array.from(dts).sort((a, b) => new Date(b).getTime() - new Date(a).getTime()),
       schools: Array.from(schs).filter(Boolean).sort(),
-      branches: Array.from(brs).filter(Boolean).sort()
+      branches: Array.from(branchMap.values()).sort((a, b) => a.localeCompare(b))
     };
-  }, [allReviewees]);
+  }, [allUsers, allReviewees, selectedCategory, firestoreBranches]);
+
+  React.useEffect(() => {
+    if (selectedDate !== 'All Dates' && !dates.includes(selectedDate)) {
+      setSelectedDate('All Dates');
+    }
+  }, [selectedCategory, dates, selectedDate]);
 
   const subjects = [
     { key: "CLJ", label: "CLJ" },
@@ -226,73 +536,72 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
   ];
 
   const displayedSubjects = useMemo(() => {
-    if (normalizeScoreCategory(selectedCategory) !== 'daily evaluation') {
+    if (normalizeScoreCategory(selectedCategory) !== 'dailyevaluation') {
       return subjects;
     }
-    if (selectedMajorArea === 'All Areas') return subjects;
-    const subSubjects = SUBJECTS_BY_AREA[selectedMajorArea];
+    const targetArea = selectedMajorArea === 'All Areas' ? 'CLJ' : selectedMajorArea;
+    const subSubjects = SUBJECTS_BY_AREA[targetArea];
     if (subSubjects) {
       return subSubjects.map(s => ({ key: s.code, label: s.code, fullTitle: s.title }));
     }
-    return subjects.filter(s => s.label === selectedMajorArea);
+    return subjects.filter(s => s.label === targetArea);
   }, [selectedCategory, selectedMajorArea]);
 
   // Apply filters and sorting
   const processedReviewees = useMemo(() => {
     const filtered = allReviewees.filter((u: RevieweeData) => {
       const uAny = u as any;
+      const canonical = resolveCanonicalUserIdentity(uAny);
+
+      const formattedName = `${canonical.lastName || uAny.last_name || ''}, ${canonical.firstName || uAny.first_name || ''} ${canonical.middleName || uAny.middle_name || ''}`.toLowerCase();
       const matchesSearch = !searchQuery || 
-        `${u.first_name || ''} ${u.middle_name ? u.middle_name + ' ' : ''}${u.last_name || ''}`.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        String(u.id_number || '').toLowerCase().includes(searchQuery.toLowerCase());
+        formattedName.includes(searchQuery.toLowerCase()) ||
+        canonical.fullName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        String(canonical.idNumber || uAny.id_number || uAny.seqId || uAny.seq_id || '').toLowerCase().includes(searchQuery.toLowerCase());
       
-      const matchesSchool = selectedSchool === 'All Schools' || (u.school_name || uAny.schoolName) === selectedSchool;
-      const matchesBranch = selectedBranch === 'All Branches' || uAny.branch === selectedBranch;
+      const uSchool = (u.school_name || uAny.schoolName || uAny.school || canonical.school || '').trim().toLowerCase();
+      const matchesSchool = selectedSchool === 'All Schools' || selectedSchool === 'all' || uSchool === selectedSchool.trim().toLowerCase();
+
+      const rawBranch = canonical.branch || uAny.branch || uAny.branchName || uAny.branch_name || uAny.reviewBranch || uAny.review_branch || uAny.assignedBranch || uAny.schoolBranch || uAny.reviewCenterBranch || '';
+      const uBranch = String(rawBranch).trim().toLowerCase();
+      const matchesBranch = selectedBranch === 'All Branches' || selectedBranch === 'all' || uBranch === selectedBranch.trim().toLowerCase();
 
       return matchesSearch && matchesSchool && matchesBranch;
     });
 
     const withScores = filtered.map((user: RevieweeData) => {
-      const records = Object.values(user.assessmentRecords || {}) as ScoreRecord[];
-      const catRecords = records.filter((r: ScoreRecord) => 
-        normalizeScoreCategory(r.category || '') === normalizeScoreCategory(selectedCategory) &&
-        (selectedDate === 'All Dates' || r.date === selectedDate)
-      );
+      const isDailyEval = normalizeScoreCategory(selectedCategory) === 'dailyevaluation';
 
       let totalEarned = 0;
       let totalPossible = 0;
 
       const subjScores = displayedSubjects.map(s => {
-        const detailed = getResolvedDetailedScore(user, selectedCategory, s.label);
-        const possible = detailed.possiblePoints > 0 ? detailed.possiblePoints : 100;
+        const unified = getUnifiedScore(user, selectedCategory, s.label, selectedDate);
+        const earned = unified.earnedScore;
+        const possible = unified.possiblePoints;
 
-        if (detailed.earnedScore !== null) {
-          totalEarned += detailed.earnedScore;
-          totalPossible += possible;
-          return { score: detailed.earnedScore, total: possible };
+        if (isDailyEval) {
+          const actualEarned = earned !== null ? earned : 0;
+          const actualPossible = earned !== null ? possible : 0;
+          totalEarned += actualEarned;
+          totalPossible += actualPossible;
+          return { score: earned, total: actualPossible };
+        } else {
+          if (earned !== null) {
+            totalEarned += earned;
+            totalPossible += possible;
+            return { score: earned, total: possible };
+          }
+          const fallbackPossible = possible > 0 ? possible : 100;
+          totalPossible += fallbackPossible;
+          return { score: null, total: fallbackPossible };
         }
-
-        const subjKey = normalizeScoreSubject(s.label);
-        const subjRecords = catRecords.filter((r: ScoreRecord) => normalizeScoreSubject(r.area || '') === subjKey);
-        
-        if (subjRecords.length > 0) {
-          let areaEarned = 0;
-          let areaPossible = 0;
-          subjRecords.forEach(r => {
-            areaEarned += Number(r.score) || 0;
-            areaPossible += Number(r.totalItems) || possible;
-          });
-          
-          totalEarned += areaEarned;
-          totalPossible += areaPossible;
-          return { score: areaEarned, total: areaPossible };
-        }
-
-        totalPossible += possible;
-        return { score: null, total: possible };
       });
 
       const rating = totalPossible > 0 ? (totalEarned / totalPossible) * 100 : 0;
-      const hasScores = displayedSubjects.length > 0;
+      const hasScores = isDailyEval 
+        ? totalPossible > 0 
+        : subjScores.some(s => s.score !== null);
 
       return {
         user,
@@ -305,37 +614,75 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
     });
 
     return withScores.sort((a, b) => {
-      if (sortBy === 'score_desc') return b.rating - a.rating;
-      if (sortBy === 'score_asc') return a.rating - b.rating;
-      
-      const nameA = `${a.user.last_name || ''} ${a.user.first_name || ''} ${a.user.middle_name || ''}`.trim().toLowerCase();
-      const nameB = `${b.user.last_name || ''} ${b.user.first_name || ''} ${b.user.middle_name || ''}`.trim().toLowerCase();
-      
-      if (sortBy === 'name_asc') return nameA.localeCompare(nameB);
-      if (sortBy === 'name_desc') return nameB.localeCompare(nameA);
-      
-      return 0;
+      let comparison = 0;
+
+      if (sortField === 'id') {
+        const idA = String(a.user.id_number || a.user.seqId || a.user.seq_id || '').toLowerCase();
+        const idB = String(b.user.id_number || b.user.seqId || b.user.seq_id || '').toLowerCase();
+        
+        const numA = parseFloat(idA.replace(/[^0-9.]/g, ''));
+        const numB = parseFloat(idB.replace(/[^0-9.]/g, ''));
+        if (!isNaN(numA) && !isNaN(numB)) {
+          comparison = numA - numB;
+        } else {
+          comparison = idA.localeCompare(idB);
+        }
+      } 
+      else if (sortField === 'name') {
+        comparison = compareUsersAlphabetically(a.user, b.user);
+      } 
+      else if (sortField === 'rating' || sortField === 'combined') {
+        comparison = a.rating - b.rating;
+      } 
+      else if (sortField === 'status') {
+        const statusA = a.hasScores ? '1' : '0';
+        const statusB = b.hasScores ? '1' : '0';
+        comparison = statusA.localeCompare(statusB);
+      } 
+      else {
+        const subjIndex = displayedSubjects.findIndex(s => s.label === sortField);
+        if (subjIndex !== -1) {
+          const scoreAObj = a.subjScores[subjIndex];
+          const scoreBObj = b.subjScores[subjIndex];
+
+          const ratingA = (scoreAObj && scoreAObj.total > 0 && scoreAObj.score !== null)
+            ? (scoreAObj.score / scoreAObj.total) * 100
+            : 0;
+          const ratingB = (scoreBObj && scoreBObj.total > 0 && scoreBObj.score !== null)
+            ? (scoreBObj.score / scoreBObj.total) * 100
+            : 0;
+
+          comparison = ratingA - ratingB;
+
+          if (comparison === 0) {
+            const earnedA = scoreAObj?.score || 0;
+            const earnedB = scoreBObj?.score || 0;
+            comparison = earnedA - earnedB;
+          }
+        }
+      }
+
+      if (comparison === 0) {
+        comparison = compareUsersAlphabetically(a.user, b.user);
+      }
+
+      return sortDirection === 'asc' ? comparison : -comparison;
     });
-  }, [allReviewees, searchQuery, selectedSchool, selectedBranch, selectedCategory, selectedDate, displayedSubjects, sortBy]);
+  }, [allReviewees, searchQuery, selectedSchool, selectedBranch, selectedCategory, selectedDate, displayedSubjects, sortField, sortDirection]);
 
-  // Pagination
-  const totalPages = Math.ceil(processedReviewees.length / itemsPerPage);
-  const paginatedReviewees = processedReviewees.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
-
+  // Use processed reviewees directly for continuous scrolling
   const dailyEvalMatrixRows: DailyEvalRevieweeRow[] = useMemo(() => {
     if (!isDailyEvalCategory) return [];
 
-    const areaSubjects = getSubjectsByArea(selectedMajorArea === 'All Areas' ? 'CLJ' : selectedMajorArea);
-
-    return paginatedReviewees.map((row: any) => {
+    return processedReviewees.map((row: any) => {
       const user = row.user;
       const subjectScores: Record<string, { earned: number | null; possible: number | null }> = {};
 
-      areaSubjects.forEach((s) => {
-        const detailed = getResolvedDetailedScore(user, selectedCategory, s.subjectCode);
-        subjectScores[s.subjectCode] = {
-          earned: detailed.earnedScore !== null ? detailed.earnedScore : null,
-          possible: detailed.possiblePoints > 0 ? detailed.possiblePoints : 100,
+      displayedSubjects.forEach((s, idx) => {
+        const sObj = row.subjScores[idx];
+        subjectScores[s.label] = {
+          earned: sObj?.score !== undefined ? sObj.score : null,
+          possible: sObj?.total !== undefined ? sObj.total : 0,
         };
       });
 
@@ -345,10 +692,10 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
         isPublished: true,
       };
     });
-  }, [isDailyEvalCategory, selectedMajorArea, paginatedReviewees, selectedCategory]);
+  }, [isDailyEvalCategory, displayedSubjects, processedReviewees]);
 
   const handleToggleSelectAllUsers = () => {
-    const currentIds = paginatedReviewees.map((r: any) => r.user.id || r.user.uid || '').filter(Boolean);
+    const currentIds = processedReviewees.map((r: any) => r.user.id || r.user.uid || '').filter(Boolean);
     if (selectedUserIds.length === currentIds.length) {
       setSelectedUserIds([]);
     } else {
@@ -367,11 +714,12 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
     const headers = ['ID Number', 'Name', ...displayedSubjects.map(s => s.label), 'Combined', 'Rating', 'Status'];
     const rows = processedReviewees.map((row: any) => {
       const { user, subjScores, totalEarned, totalPossible, rating, hasScores } = row;
-      const name = getCanonicalFullName(user).displayName;
-      const id = user.id_number || user.seqId || user.seq_id || user.idNumber || user.revieweeId || user.id || '';
+      const canonical = resolveCanonicalUserIdentity(user);
+      const name = formatFormalName(canonical);
+      const id = canonical.idNumber || user.id_number || user.seqId || user.seq_id || user.id || '';
       const scores = subjScores.map((s: any) => s !== null ? s : '-');
       const combined = hasScores ? `${totalEarned}/${totalPossible}` : '-';
-      const rat = hasScores ? `${rating.toFixed(2)}%` : '-';
+      const rat = `${(rating || 0).toFixed(2)}%`;
       const status = hasScores ? (subjScores.every((s: any) => s !== null) ? 'Completed' : 'In Progress') : 'Not Started';
       return [id, name, ...scores, combined, rat, status];
     });
@@ -394,15 +742,16 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
     
     const tableRowsHtml = processedReviewees.map((row: any, idx: number) => {
       const { user, subjScores, totalEarned, totalPossible, rating, hasScores } = row;
-      const name = getCanonicalFullName(user).displayName;
-      const idNum = user.id_number || user.seqId || user.seq_id || user.idNumber || user.revieweeId || user.id || '-';
+      const canonical = resolveCanonicalUserIdentity(user);
+      const name = formatFormalName(canonical);
+      const idNum = canonical.idNumber || user.id_number || user.seqId || user.seq_id || '-';
       const scoreCells = subjScores.map((s: any) => {
         if (s !== null && s.score !== null) {
-          const pct = s.total > 0 ? ((s.score / s.total) * 100).toFixed(1) : '0.0';
+          const pct = s.total > 0 ? ((s.score / s.total) * 100).toFixed(2) : '0.00';
           return `${s.score}/${s.total}<br/><small style="color: #0d9488; font-weight: bold;">${pct}%</small>`;
         }
         const total = s?.total || 100;
-        return `___/${total}<br/><small style="color: #94a3b8; font-weight: bold;">0.0%</small>`;
+        return `___/${total}<br/><small style="color: #94a3b8; font-weight: bold;">0.00%</small>`;
       });
       const combinedStr = `${totalEarned}/${totalPossible}`;
       const ratStr = `${rating.toFixed(2)}%`;
@@ -472,7 +821,7 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
   };
 
   return (
-    <div className="flex flex-col min-h-[calc(100vh-80px)] overflow-y-auto bg-white pb-12">
+    <div className="flex flex-col min-h-0 h-full bg-white pb-16">
       <div className="p-4 sm:p-6 pb-4 shrink-0">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
           <div>
@@ -516,259 +865,88 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
 
         {/* Filters */}
         {showFilters && (
-          <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4 items-end mb-4">
+          <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4 items-end mb-4 overflow-visible relative z-20">
+            {/* Category */}
             <div className="lg:col-span-1 relative">
               <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">Category</label>
-              <button
-                type="button"
-                onClick={() => setShowCategoryDropdown(!showCategoryDropdown)}
-                className="w-full flex items-center justify-between text-xs p-2 border border-slate-200 rounded-lg bg-slate-50 hover:bg-slate-100 font-semibold text-slate-800 transition-all text-left cursor-pointer"
-              >
-                <span className="truncate">{selectedCategory}</span>
-                <ChevronDown size={14} className={`text-slate-400 transition-transform duration-200 shrink-0 ${showCategoryDropdown ? 'rotate-180 text-teal-600' : ''}`} />
-              </button>
-
-              <AnimatePresence>
-                {showCategoryDropdown && (
-                  <>
-                    <div className="fixed inset-0 z-20" onClick={() => setShowCategoryDropdown(false)} />
-                    <motion.div
-                      initial={{ opacity: 0, y: 4, scale: 0.98 }}
-                      animate={{ opacity: 1, y: 0, scale: 1 }}
-                      exit={{ opacity: 0, y: 4, scale: 0.98 }}
-                      transition={{ duration: 0.15, ease: 'easeOut' }}
-                      className="absolute left-0 right-0 mt-1.5 bg-white border border-slate-200 rounded-xl shadow-xl z-30 overflow-hidden divide-y divide-slate-100 max-h-60 overflow-y-auto"
-                    >
-                      {categories.map(c => (
-                        <button
-                          key={c}
-                          type="button"
-                          onClick={() => {
-                            setSelectedCategory(c);
-                            setShowCategoryDropdown(false);
-                          }}
-                          className={`w-full text-left p-2.5 text-xs font-bold transition-all flex items-center justify-between cursor-pointer ${
-                            selectedCategory === c ? 'bg-teal-50 text-teal-700' : 'text-slate-700 hover:bg-slate-50'
-                          }`}
-                        >
-                          <span className="truncate">{c}</span>
-                          {selectedCategory === c && <Check size={14} className="text-teal-600 shrink-0" />}
-                        </button>
-                      ))}
-                    </motion.div>
-                  </>
-                )}
-              </AnimatePresence>
+              <AnimatedSelect
+                id="category-filter"
+                value={selectedCategory}
+                onChange={setSelectedCategory}
+                options={categories.map(c => ({ value: c, label: c }))}
+                searchable={false}
+                mobileMode="popover"
+                triggerClassName="h-9 border-slate-200 bg-slate-50 hover:bg-slate-100 rounded-lg text-xs font-semibold text-slate-800 py-2 px-2.5"
+              />
             </div>
+
             {/* Evaluation Date */}
             <div className="lg:col-span-1 relative">
               <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">Evaluation Date</label>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowDateDropdown(!showDateDropdown);
-                  setShowCategoryDropdown(false);
-                  setShowMajorAreaDropdown(false);
-                  setShowSchoolDropdown(false);
-                  setShowBranchDropdown(false);
-                  setShowSortByDropdown(false);
-                }}
-                className="w-full flex items-center justify-between text-xs p-2 border border-slate-200 rounded-lg bg-slate-50 hover:bg-slate-100 font-semibold text-slate-800 transition-all text-left cursor-pointer"
-              >
-                <span className="truncate">{selectedDate}</span>
-                <ChevronDown size={14} className={`text-slate-400 transition-transform duration-200 shrink-0 ${showDateDropdown ? 'rotate-180 text-teal-600' : ''}`} />
-              </button>
-
-              <AnimatePresence>
-                {showDateDropdown && (
-                  <>
-                    <div className="fixed inset-0 z-20" onClick={() => setShowDateDropdown(false)} />
-                    <motion.div
-                      initial={{ opacity: 0, y: 4, scale: 0.98 }}
-                      animate={{ opacity: 1, y: 0, scale: 1 }}
-                      exit={{ opacity: 0, y: 4, scale: 0.98 }}
-                      transition={{ duration: 0.15, ease: 'easeOut' }}
-                      className="absolute left-0 right-0 mt-1.5 bg-white border border-slate-200 rounded-xl shadow-xl z-30 overflow-hidden divide-y divide-slate-100 max-h-60 overflow-y-auto"
-                    >
-                      {['All Dates', ...dates].map(d => (
-                        <button
-                          key={d}
-                          type="button"
-                          onClick={() => {
-                            setSelectedDate(d);
-                            setShowDateDropdown(false);
-                          }}
-                          className={`w-full text-left p-2.5 text-xs font-bold transition-all flex items-center justify-between cursor-pointer ${
-                            selectedDate === d ? 'bg-teal-50 text-teal-700' : 'text-slate-700 hover:bg-slate-50'
-                          }`}
-                        >
-                          <span className="truncate">{d}</span>
-                          {selectedDate === d && <Check size={14} className="text-teal-600 shrink-0" />}
-                        </button>
-                      ))}
-                    </motion.div>
-                  </>
-                )}
-              </AnimatePresence>
+              <AnimatedSelect
+                id="evaluation-date-filter"
+                value={selectedDate}
+                onChange={setSelectedDate}
+                options={['All Dates', ...dates].map(d => ({ value: d, label: d }))}
+                searchable={dates.length > 5}
+                mobileMode="popover"
+                triggerClassName="h-9 border-slate-200 bg-slate-50 hover:bg-slate-100 rounded-lg text-xs font-semibold text-slate-800 py-2 px-2.5"
+              />
             </div>
 
-            {/* Major Area */}
-            <div className="lg:col-span-1 relative">
-              <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">Major Area</label>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowMajorAreaDropdown(!showMajorAreaDropdown);
-                  setShowCategoryDropdown(false);
-                  setShowDateDropdown(false);
-                  setShowSchoolDropdown(false);
-                  setShowBranchDropdown(false);
-                  setShowSortByDropdown(false);
-                }}
-                className="w-full flex items-center justify-between text-xs p-2 border border-slate-200 rounded-lg bg-slate-50 hover:bg-slate-100 font-semibold text-slate-800 transition-all text-left cursor-pointer"
-              >
-                <span className="truncate">{selectedMajorArea}</span>
-                <ChevronDown size={14} className={`text-slate-400 transition-transform duration-200 shrink-0 ${showMajorAreaDropdown ? 'rotate-180 text-teal-600' : ''}`} />
-              </button>
-
-              <AnimatePresence>
-                {showMajorAreaDropdown && (
-                  <>
-                    <div className="fixed inset-0 z-20" onClick={() => setShowMajorAreaDropdown(false)} />
-                    <motion.div
-                      initial={{ opacity: 0, y: 4, scale: 0.98 }}
-                      animate={{ opacity: 1, y: 0, scale: 1 }}
-                      exit={{ opacity: 0, y: 4, scale: 0.98 }}
-                      transition={{ duration: 0.15, ease: 'easeOut' }}
-                      className="absolute left-0 right-0 mt-1.5 bg-white border border-slate-200 rounded-xl shadow-xl z-30 overflow-hidden divide-y divide-slate-100 max-h-60 overflow-y-auto"
-                    >
-                      {['All Areas', ...subjects.map(s => s.label)].map(area => (
-                        <button
-                          key={area}
-                          type="button"
-                          onClick={() => {
-                            setSelectedMajorArea(area);
-                            setShowMajorAreaDropdown(false);
-                          }}
-                          className={`w-full text-left p-2.5 text-xs font-bold transition-all flex items-center justify-between cursor-pointer ${
-                            selectedMajorArea === area ? 'bg-teal-50 text-teal-700' : 'text-slate-700 hover:bg-slate-50'
-                          }`}
-                        >
-                          <span className="truncate">{area}</span>
-                          {selectedMajorArea === area && <Check size={14} className="text-teal-600 shrink-0" />}
-                        </button>
-                      ))}
-                    </motion.div>
-                  </>
-                )}
-              </AnimatePresence>
-            </div>
+            {/* Major Area - Only for Daily Evaluation */}
+            {isDailyEvalCategory && (
+              <div className="lg:col-span-1 relative">
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">Major Area</label>
+                <AnimatedSelect
+                  id="major-area-filter"
+                  value={selectedMajorArea}
+                  onChange={setSelectedMajorArea}
+                  options={['CLJ', 'LEA', 'CDI', 'FS', 'CRIM', 'CA'].map(area => ({ value: area, label: area }))}
+                  searchable={false}
+                  mobileMode="popover"
+                  triggerClassName="h-9 border-slate-200 bg-slate-50 hover:bg-slate-100 rounded-lg text-xs font-semibold text-slate-800 py-2 px-2.5"
+                />
+              </div>
+            )}
 
             {/* School */}
             <div className="lg:col-span-1 relative">
               <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">School</label>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowSchoolDropdown(!showSchoolDropdown);
-                  setShowCategoryDropdown(false);
-                  setShowDateDropdown(false);
-                  setShowMajorAreaDropdown(false);
-                  setShowBranchDropdown(false);
-                  setShowSortByDropdown(false);
-                }}
-                className="w-full flex items-center justify-between text-xs p-2 border border-slate-200 rounded-lg bg-slate-50 hover:bg-slate-100 font-semibold text-slate-800 transition-all text-left cursor-pointer"
-              >
-                <span className="truncate">{selectedSchool}</span>
-                <ChevronDown size={14} className={`text-slate-400 transition-transform duration-200 shrink-0 ${showSchoolDropdown ? 'rotate-180 text-teal-600' : ''}`} />
-              </button>
-
-              <AnimatePresence>
-                {showSchoolDropdown && (
-                  <>
-                    <div className="fixed inset-0 z-20" onClick={() => setShowSchoolDropdown(false)} />
-                    <motion.div
-                      initial={{ opacity: 0, y: 4, scale: 0.98 }}
-                      animate={{ opacity: 1, y: 0, scale: 1 }}
-                      exit={{ opacity: 0, y: 4, scale: 0.98 }}
-                      transition={{ duration: 0.15, ease: 'easeOut' }}
-                      className="absolute left-0 right-0 mt-1.5 bg-white border border-slate-200 rounded-xl shadow-xl z-30 overflow-hidden divide-y divide-slate-100 max-h-60 overflow-y-auto"
-                    >
-                      {['All Schools', ...schools].map(s => (
-                        <button
-                          key={s}
-                          type="button"
-                          onClick={() => {
-                            setSelectedSchool(s);
-                            setShowSchoolDropdown(false);
-                          }}
-                          className={`w-full text-left p-2.5 text-xs font-bold transition-all flex items-center justify-between cursor-pointer ${
-                            selectedSchool === s ? 'bg-teal-50 text-teal-700' : 'text-slate-700 hover:bg-slate-50'
-                          }`}
-                        >
-                          <span className="truncate">{s}</span>
-                          {selectedSchool === s && <Check size={14} className="text-teal-600 shrink-0" />}
-                        </button>
-                      ))}
-                    </motion.div>
-                  </>
-                )}
-              </AnimatePresence>
+              <AnimatedSelect
+                id="school-filter"
+                value={selectedSchool}
+                onChange={setSelectedSchool}
+                options={['All Schools', ...schools].map(s => ({ value: s, label: s }))}
+                searchable={schools.length > 5}
+                mobileMode="popover"
+                triggerClassName="h-9 border-slate-200 bg-slate-50 hover:bg-slate-100 rounded-lg text-xs font-semibold text-slate-800 py-2 px-2.5"
+              />
             </div>
 
             {/* Branch */}
             <div className="lg:col-span-1 relative">
               <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">Branch</label>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowBranchDropdown(!showBranchDropdown);
-                  setShowCategoryDropdown(false);
-                  setShowDateDropdown(false);
-                  setShowMajorAreaDropdown(false);
-                  setShowSchoolDropdown(false);
-                  setShowSortByDropdown(false);
-                }}
-                className="w-full flex items-center justify-between text-xs p-2 border border-slate-200 rounded-lg bg-slate-50 hover:bg-slate-100 font-semibold text-slate-800 transition-all text-left cursor-pointer"
-              >
-                <span className="truncate">{selectedBranch}</span>
-                <ChevronDown size={14} className={`text-slate-400 transition-transform duration-200 shrink-0 ${showBranchDropdown ? 'rotate-180 text-teal-600' : ''}`} />
-              </button>
-
-              <AnimatePresence>
-                {showBranchDropdown && (
-                  <>
-                    <div className="fixed inset-0 z-20" onClick={() => setShowBranchDropdown(false)} />
-                    <motion.div
-                      initial={{ opacity: 0, y: 4, scale: 0.98 }}
-                      animate={{ opacity: 1, y: 0, scale: 1 }}
-                      exit={{ opacity: 0, y: 4, scale: 0.98 }}
-                      transition={{ duration: 0.15, ease: 'easeOut' }}
-                      className="absolute left-0 right-0 mt-1.5 bg-white border border-slate-200 rounded-xl shadow-xl z-30 overflow-hidden divide-y divide-slate-100 max-h-60 overflow-y-auto"
-                    >
-                      {['All Branches', ...branches].map(b => (
-                        <button
-                          key={b}
-                          type="button"
-                          onClick={() => {
-                            setSelectedBranch(b);
-                            setShowBranchDropdown(false);
-                          }}
-                          className={`w-full text-left p-2.5 text-xs font-bold transition-all flex items-center justify-between cursor-pointer ${
-                            selectedBranch === b ? 'bg-teal-50 text-teal-700' : 'text-slate-700 hover:bg-slate-50'
-                          }`}
-                        >
-                          <span className="truncate">{b}</span>
-                          {selectedBranch === b && <Check size={14} className="text-teal-600 shrink-0" />}
-                        </button>
-                      ))}
-                    </motion.div>
-                  </>
-                )}
-              </AnimatePresence>
+              <AnimatedSelect
+                id="branch-filter"
+                value={selectedBranch}
+                onChange={setSelectedBranch}
+                options={
+                  branchesLoading
+                    ? [{ value: 'All Branches', label: 'Loading branches...' }]
+                    : branchesError && branches.length === 0
+                    ? [{ value: 'All Branches', label: 'Unable to load branches' }]
+                    : branches.length === 0
+                    ? [{ value: 'All Branches', label: 'No branches available' }]
+                    : ['All Branches', ...branches].map(b => ({ value: b, label: b }))
+                }
+                searchable={branches.length > 5}
+                mobileMode="popover"
+                triggerClassName="h-9 border-slate-200 bg-slate-50 hover:bg-slate-100 rounded-lg text-xs font-semibold text-slate-800 py-2 px-2.5"
+              />
             </div>
 
-            <div className="lg:col-span-1 relative">
+            <div className={`${isDailyEvalCategory ? 'lg:col-span-1' : 'lg:col-span-2'} relative`}>
               <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">Search</label>
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
@@ -781,106 +959,11 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
                 />
               </div>
             </div>
-
-            {/* Sort By */}
-            <div className="lg:col-span-1 sm:col-span-2 relative">
-              <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">Sort By</label>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowSortByDropdown(!showSortByDropdown);
-                  setShowCategoryDropdown(false);
-                  setShowDateDropdown(false);
-                  setShowMajorAreaDropdown(false);
-                  setShowSchoolDropdown(false);
-                  setShowBranchDropdown(false);
-                }}
-                className="w-full flex items-center justify-between text-xs p-2 border border-slate-200 rounded-lg bg-slate-50 hover:bg-slate-100 font-semibold text-slate-800 transition-all text-left cursor-pointer"
-              >
-                <span className="truncate">
-                  {
-                    [
-                      { value: 'score_desc', label: 'Rating (High to Low)' },
-                      { value: 'score_asc', label: 'Rating (Low to High)' },
-                      { value: 'name_asc', label: 'Name (A-Z)' },
-                      { value: 'name_desc', label: 'Name (Z-A)' }
-                    ].find(o => o.value === sortBy)?.label || sortBy
-                  }
-                </span>
-                <ChevronDown size={14} className={`text-slate-400 transition-transform duration-200 shrink-0 ${showSortByDropdown ? 'rotate-180 text-teal-600' : ''}`} />
-              </button>
-
-              <AnimatePresence>
-                {showSortByDropdown && (
-                  <>
-                    <div className="fixed inset-0 z-20" onClick={() => setShowSortByDropdown(false)} />
-                    <motion.div
-                      initial={{ opacity: 0, y: 4, scale: 0.98 }}
-                      animate={{ opacity: 1, y: 0, scale: 1 }}
-                      exit={{ opacity: 0, y: 4, scale: 0.98 }}
-                      transition={{ duration: 0.15, ease: 'easeOut' }}
-                      className="absolute left-0 right-0 mt-1.5 bg-white border border-slate-200 rounded-xl shadow-xl z-30 overflow-hidden divide-y divide-slate-100 max-h-60 overflow-y-auto"
-                    >
-                      {[
-                        { value: 'score_desc', label: 'Rating (High to Low)' },
-                        { value: 'score_asc', label: 'Rating (Low to High)' },
-                        { value: 'name_asc', label: 'Name (A-Z)' },
-                        { value: 'name_desc', label: 'Name (Z-A)' }
-                      ].map(o => (
-                        <button
-                          key={o.value}
-                          type="button"
-                          onClick={() => {
-                            setSortBy(o.value);
-                            setShowSortByDropdown(false);
-                          }}
-                          className={`w-full text-left p-2.5 text-xs font-bold transition-all flex items-center justify-between cursor-pointer ${
-                            sortBy === o.value ? 'bg-teal-50 text-teal-700' : 'text-slate-700 hover:bg-slate-50'
-                          }`}
-                        >
-                          <span className="truncate">{o.label}</span>
-                          {sortBy === o.value && <Check size={14} className="text-teal-600 shrink-0" />}
-                        </button>
-                      ))}
-                    </motion.div>
-                  </>
-                )}
-              </AnimatePresence>
-            </div>
           </div>
-        )}
-
-        {/* Legend */}
-        {showFilters && !isDailyEvalCategory && (
-          selectedMajorArea !== 'All Areas' && SUBJECTS_BY_AREA[selectedMajorArea] ? (
-            <div className="mt-4 bg-white p-4 rounded-xl shadow-sm border border-slate-200">
-              <h3 className="text-xs font-bold text-teal-800 uppercase tracking-wider mb-3 flex items-center gap-2">
-                <span className="w-1 h-3 bg-teal-600 rounded-full"></span>
-                {selectedMajorArea} SUBJECT LEGEND
-              </h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-x-6 gap-y-2">
-                {SUBJECTS_BY_AREA[selectedMajorArea].map(s => (
-                  <div key={s.code} className="text-[10px] text-slate-500 flex gap-2">
-                    <span className="font-bold text-teal-700 whitespace-nowrap">{s.code}</span>
-                    <span className="truncate" title={s.title}>{s.title}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <div className="flex flex-wrap gap-x-6 gap-y-2 mt-4 px-2">
-              <div className="text-[10px] text-slate-500"><span className="font-bold text-slate-700">CLJ:</span> Criminal Law and Jurisprudence</div>
-              <div className="text-[10px] text-slate-500"><span className="font-bold text-slate-700">LEA:</span> Law Enforcement Administration</div>
-              <div className="text-[10px] text-slate-500"><span className="font-bold text-slate-700">CDI:</span> Crime Detection and Investigation</div>
-              <div className="text-[10px] text-slate-500"><span className="font-bold text-slate-700">FS:</span> Forensic Science</div>
-              <div className="text-[10px] text-slate-500"><span className="font-bold text-slate-700">CRIM:</span> Criminology</div>
-              <div className="text-[10px] text-slate-500"><span className="font-bold text-slate-700">CA:</span> Correctional Administration</div>
-            </div>
-          )
         )}
       </div>
 
-      <div className="flex-1 px-4 sm:px-6 pb-6 overflow-x-auto">
+      <div className="flex-1 min-h-0 px-4 sm:px-6 overflow-auto">
         {isDailyEvalCategory ? (
           <DailyEvaluationRevieweeMatrix
             areaCode={selectedMajorArea === 'All Areas' ? 'CLJ' : selectedMajorArea}
@@ -899,6 +982,21 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
                 possiblePoints: possible,
               });
             }}
+            sortField={sortField}
+            sortDirection={sortDirection}
+            onSort={(field) => {
+              if (sortField === field) {
+                if (sortDirection === 'asc') {
+                  setSortDirection('desc');
+                } else {
+                  setSortField('name');
+                  setSortDirection('asc');
+                }
+              } else {
+                setSortField(field);
+                setSortDirection('asc');
+              }
+            }}
           />
         ) : (
           <div className="bg-white rounded-xl shadow-sm border border-slate-200">
@@ -910,29 +1008,126 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
                       <input type="checkbox" className="rounded border-slate-300 text-teal-600 focus:ring-teal-500 cursor-pointer" />
                       <span className="ml-2">Select</span>
                     </th>
-                    <th className="px-4 py-3 font-bold text-teal-900 whitespace-nowrap">ID Number</th>
-                    <th className="px-4 py-3 font-bold text-teal-900 w-full min-w-[200px]">Reviewee</th>
+                    <th className="px-4 py-3 font-bold text-teal-900 whitespace-nowrap">
+                      <button 
+                        type="button" 
+                        onClick={() => {
+                          if (sortField === 'id') {
+                            setSortDirection(d => d === 'asc' ? 'desc' : 'asc');
+                          } else {
+                            setSortField('id');
+                            setSortDirection('asc');
+                          }
+                        }}
+                        className="flex items-center gap-1 hover:text-teal-700 transition-colors cursor-pointer font-bold"
+                      >
+                        ID Number
+                        {sortField === 'id' && (sortDirection === 'asc' ? ' ▲' : ' ▼')}
+                      </button>
+                    </th>
+                    <th className="px-4 py-3 font-bold text-teal-900 w-full min-w-[200px]">
+                      <button 
+                        type="button" 
+                        onClick={() => {
+                          if (sortField === 'name') {
+                            setSortDirection(d => d === 'asc' ? 'desc' : 'asc');
+                          } else {
+                            setSortField('name');
+                            setSortDirection('asc');
+                          }
+                        }}
+                        className="flex items-center gap-1 hover:text-teal-700 transition-colors cursor-pointer font-bold"
+                      >
+                        Reviewee
+                        {sortField === 'name' && (sortDirection === 'asc' ? ' ▲' : ' ▼')}
+                      </button>
+                    </th>
                     {displayedSubjects.map(s => (
-                      <th key={s.key} className="px-3 py-3 font-bold text-teal-900 text-center whitespace-nowrap">{s.label}</th>
+                      <th key={s.key} className="px-3 py-3 font-bold text-teal-900 text-center whitespace-nowrap">
+                        <button 
+                          type="button" 
+                          onClick={() => {
+                            if (sortField === s.label) {
+                              setSortDirection(d => d === 'asc' ? 'desc' : 'asc');
+                            } else {
+                              setSortField(s.label);
+                              setSortDirection('asc');
+                            }
+                          }}
+                          className="flex items-center gap-1 justify-center hover:text-teal-700 transition-colors cursor-pointer font-bold mx-auto"
+                        >
+                          {s.label}
+                          {sortField === s.label && (sortDirection === 'asc' ? ' ▲' : ' ▼')}
+                        </button>
+                      </th>
                     ))}
-                    <th className="px-4 py-3 font-bold text-teal-900 text-center whitespace-nowrap">Combined</th>
-                    <th className="px-4 py-3 font-bold text-teal-900 text-center whitespace-nowrap">Rating</th>
-                    <th className="px-4 py-3 font-bold text-teal-900 text-center whitespace-nowrap">Status</th>
+                    <th className="px-4 py-3 font-bold text-teal-900 text-center whitespace-nowrap">
+                      <button 
+                        type="button" 
+                        onClick={() => {
+                          if (sortField === 'combined') {
+                            setSortDirection(d => d === 'asc' ? 'desc' : 'asc');
+                          } else {
+                            setSortField('combined');
+                            setSortDirection('asc');
+                          }
+                        }}
+                        className="flex items-center gap-1 justify-center hover:text-teal-700 transition-colors cursor-pointer font-bold mx-auto"
+                      >
+                        Combined
+                        {sortField === 'combined' && (sortDirection === 'asc' ? ' ▲' : ' ▼')}
+                      </button>
+                    </th>
+                    <th className="px-4 py-3 font-bold text-teal-900 text-center whitespace-nowrap">
+                      <button 
+                        type="button" 
+                        onClick={() => {
+                          if (sortField === 'rating') {
+                            setSortDirection(d => d === 'asc' ? 'desc' : 'asc');
+                          } else {
+                            setSortField('rating');
+                            setSortDirection('asc');
+                          }
+                        }}
+                        className="flex items-center gap-1 justify-center hover:text-teal-700 transition-colors cursor-pointer font-bold mx-auto"
+                      >
+                        Rating
+                        {sortField === 'rating' && (sortDirection === 'asc' ? ' ▲' : ' ▼')}
+                      </button>
+                    </th>
+                    <th className="px-4 py-3 font-bold text-teal-900 text-center whitespace-nowrap">
+                      <button 
+                        type="button" 
+                        onClick={() => {
+                          if (sortField === 'status') {
+                            setSortDirection(d => d === 'asc' ? 'desc' : 'asc');
+                          } else {
+                            setSortField('status');
+                            setSortDirection('asc');
+                          }
+                        }}
+                        className="flex items-center gap-1 justify-center hover:text-teal-700 transition-colors cursor-pointer font-bold mx-auto"
+                      >
+                        Status
+                        {sortField === 'status' && (sortDirection === 'asc' ? ' ▲' : ' ▼')}
+                      </button>
+                    </th>
                     <th className="px-4 py-3 font-bold text-teal-900 text-center whitespace-nowrap">Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {paginatedReviewees.map((row: any) => {
+                  {processedReviewees.map((row: any, idx: number) => {
                     const { user, subjScores, totalEarned, totalPossible, rating, hasScores } = row;
                     const scoreColorClass = getScoreColor(rating);
+                    const rowKey = user.doc_id || user.uid || user.id || `row_${idx}`;
                     return (
-                      <tr key={user.uid || user.doc_id} className="hover:bg-slate-50/80 transition-colors">
+                      <tr key={`${rowKey}_${idx}`} className="hover:bg-slate-50/80 transition-colors">
                         <td className="px-4 py-3 text-center border-r border-slate-100/50">
                           <input type="checkbox" className="rounded border-slate-300 text-teal-600 focus:ring-teal-500 cursor-pointer" />
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap font-medium text-blue-600">{user.id_number || user.seqId || user.seq_id || user.idNumber || user.revieweeId || user.id || '-'}</td>
                         <td className="px-4 py-3 font-medium text-slate-700">
-                          {getCanonicalFullName(user).displayName}
+                          {formatFormalName(resolveCanonicalUserIdentity(user))}
                         </td>
                         {subjScores.map((s: any, i: number) => {
                           const subjObj = displayedSubjects[i];
@@ -956,7 +1151,7 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
                           {hasScores ? (
                             <span className={scoreColorClass}>{rating.toFixed(2)}%</span>
                           ) : (
-                            <span className="text-slate-300">-</span>
+                            <span className="text-slate-400 font-bold">0.00%</span>
                           )}
                         </td>
                         <td className="px-4 py-3 text-center">
@@ -1002,34 +1197,6 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
                 </tbody>
               </table>
             </div>
-            
-            {/* Pagination */}
-            {totalPages > 1 && (
-              <div className="mt-auto px-6 py-4 border-t border-slate-200 flex items-center justify-between bg-slate-50/50">
-                <span className="text-xs text-slate-500 font-medium">
-                  Showing {((currentPage - 1) * itemsPerPage) + 1} to {Math.min(currentPage * itemsPerPage, processedReviewees.length)} of {processedReviewees.length} reviewees
-                </span>
-                <div className="flex gap-1">
-                  <button 
-                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                    disabled={currentPage === 1}
-                    className="p-1.5 border border-slate-200 rounded text-slate-600 hover:bg-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                  >
-                    <ChevronLeft size={16} />
-                  </button>
-                  <div className="flex items-center px-3 text-xs font-bold text-slate-700">
-                    Page {currentPage} of {totalPages}
-                  </div>
-                  <button 
-                    onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                    disabled={currentPage === totalPages}
-                    className="p-1.5 border border-slate-200 rounded text-slate-600 hover:bg-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                  >
-                    <ChevronRight size={16} />
-                  </button>
-                </div>
-              </div>
-            )}
           </div>
         )}
       </div>

@@ -8,7 +8,8 @@ import {
   History,
   Target,
   Bell,
-  Menu
+  Menu,
+  LogOut
 } from 'lucide-react';
 import type { RevieweeData } from '../types';
 import { parseScores } from '../utils/scoreParser';
@@ -30,6 +31,8 @@ import { AreaPerformanceCircle } from './AreaPerformanceCircle';
 import { AreaPerformanceModal } from './performance/AreaPerformanceModal';
 import { getResolvedScore } from '../utils/scoreFieldResolver';
 import { isValidRevieweeRecord } from '../services/userIdentityResolver';
+import { UserAvatar } from './UserAvatar';
+import { PortalBottomMenu } from './ui/portal-bottom-menu';
 
 const areaTitleMap: Record<string, string> = {
   "CLJ": "Criminal Law and Jurisprudence",
@@ -129,7 +132,7 @@ export function RevieweePortal({ data, onLogout }: { data: RevieweeData, onLogou
   // Calculate dynamic rank for this specific reviewee among all reviewees
   const rankInfo = useMemo(() => {
     if (!allUsers || allUsers.length === 0 || scores.length === 0) {
-      return { rank: "N/A", subtitle: "No scores yet", topPercent: null };
+      return { rank: "0", subtitle: "No scores yet", topPercent: null };
     }
 
     const revieweesList = allUsers.filter((u: any) => getUserRole(u) === "Reviewee");
@@ -167,7 +170,7 @@ export function RevieweePortal({ data, onLogout }: { data: RevieweeData, onLogou
     );
 
     if (idx === -1) {
-      return { rank: "N/A", subtitle: `Out of ${revieweesList.length} Reviewees`, topPercent: null };
+      return { rank: "0", subtitle: `Out of ${revieweesList.length} Reviewees`, topPercent: null };
     }
 
     const rankNum = idx + 1;
@@ -186,7 +189,7 @@ export function RevieweePortal({ data, onLogout }: { data: RevieweeData, onLogou
     const evaluatedAreasCount = new Set(scores.map(s => s.area)).size;
     const progressPercent = Math.min(100, Math.round((evaluatedAreasCount / 6) * 100));
     return {
-      percentStr: scores.length > 0 ? `${progressPercent}%` : "N/A",
+      percentStr: scores.length > 0 ? `${progressPercent}%` : "0.00%",
       subtitle: scores.length > 0 ? `${evaluatedAreasCount} of 6 Subject Areas Evaluated` : "No scores yet"
     };
   }, [scores]);
@@ -238,19 +241,6 @@ export function RevieweePortal({ data, onLogout }: { data: RevieweeData, onLogou
     date: s.date || '—',
   })), [scores]);
 
-  const navItems = [
-    { key: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={18} /> },
-    { key: 'my-scores', label: 'My Scores', icon: <ClipboardList size={18} /> },
-    { key: 'profile', label: 'Profile', icon: <User size={18} /> },
-  ];
-
-  const footerItems = [
-    { key: 'dashboard', label: 'Home', icon: <LayoutDashboard size={18} /> },
-    { key: 'my-scores', label: 'Scores', icon: <ClipboardList size={18} /> },
-    { key: 'profile', label: 'Profile', icon: <User size={18} /> },
-    { key: 'menu', label: 'Menu', icon: <Menu size={18} /> },
-  ];
-
   const revieweeName = `${revieweeData.first_name || ''} ${revieweeData.middle_name ? revieweeData.middle_name + ' ' : ''}${revieweeData.last_name || ''}`.trim() || 'Reviewee';
 
   const renderDashboard = () => (
@@ -259,7 +249,7 @@ export function RevieweePortal({ data, onLogout }: { data: RevieweeData, onLogou
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard
           label="Overall Average"
-          value={scores.length > 0 ? `${avgScore}%` : 'N/A'}
+          value={scores.length > 0 ? `${Number(avgScore).toFixed(2)}%` : '0.00%'}
           icon={<Star size={18} />}
           tone="blue"
           subtitle={scores.length > 0 ? getScoreLabel(avgScore) : 'No scores yet'}
@@ -288,22 +278,25 @@ export function RevieweePortal({ data, onLogout }: { data: RevieweeData, onLogou
       </div>
 
       {/* Area Scores */}
-      <section className="rounded-[1.5rem] border border-slate-200 bg-white p-4 sm:p-5 shadow-sm">
+      <section className="rounded-[1.5rem] border border-slate-200 bg-white p-4 sm:p-5 shadow-sm overflow-hidden">
         <SectionHeader title="Performance by Area" onViewAll={() => handleTabChange('progress')} />
-        <div className="flex gap-3 overflow-x-auto pb-2 -mx-1 px-1 lg:grid lg:grid-cols-6 lg:overflow-visible lg:mx-0 lg:px-0">
-          {areaScores.length === 0 ? (
-            <p className="py-6 text-xs font-medium text-slate-500">No scores encoded yet.</p>
-          ) : (
-            areaScores.map((item) => (
-              <AreaPerformanceCircle 
-                key={item.area} 
-                subject={item.area} 
-                percentage={item.percent} 
-                subtitle={item.subtitle} 
-                onClick={() => handleAreaCardClick(item.area, item.key as SubjectArea)}
-              />
-            ))
-          )}
+        <div className="-mx-4 overflow-x-auto px-4 pb-3">
+          <div className="flex w-max gap-3 lg:grid lg:w-full lg:grid-cols-6">
+            {areaScores.length === 0 ? (
+              <p className="py-6 text-xs font-medium text-slate-500">No scores encoded yet.</p>
+            ) : (
+              areaScores.map((item) => (
+                <div key={item.area} className="w-[180px] shrink-0 lg:w-auto">
+                  <AreaPerformanceCircle 
+                    subject={item.area} 
+                    percentage={item.percent} 
+                    subtitle={item.subtitle} 
+                    onClick={() => handleAreaCardClick(item.area, item.key as SubjectArea)}
+                  />
+                </div>
+              ))
+            )}
+          </div>
         </div>
       </section>
 
@@ -365,7 +358,7 @@ export function RevieweePortal({ data, onLogout }: { data: RevieweeData, onLogou
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <StatCard
           label="Overall Average"
-          value={scores.length > 0 ? `${avgScore}%` : 'N/A'}
+          value={scores.length > 0 ? `${avgScore}%` : '0.00%'}
           icon={<Star size={18} />}
           tone="blue"
           subtitle={scores.length > 0 ? getScoreLabel(avgScore) : 'No scores yet'}
@@ -386,18 +379,21 @@ export function RevieweePortal({ data, onLogout }: { data: RevieweeData, onLogou
         />
       </div>
 
-      <section className="rounded-[1.5rem] border border-slate-200 bg-white p-5 shadow-sm">
+      <section className="rounded-[1.5rem] border border-slate-200 bg-white p-5 shadow-sm overflow-hidden">
         <SectionHeader title="Subject Area Performance" />
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
-          {areaScores.map((item) => (
-            <AreaPerformanceCircle 
-              key={item.area} 
-              subject={item.area} 
-              percentage={item.percent} 
-              subtitle={item.subtitle} 
-              onClick={() => handleAreaCardClick(item.area, item.key as SubjectArea)}
-            />
-          ))}
+        <div className="-mx-4 overflow-x-auto px-4 pb-3">
+          <div className="flex w-max gap-4 lg:grid lg:w-full lg:grid-cols-6">
+            {areaScores.map((item) => (
+              <div key={item.area} className="w-[180px] shrink-0 lg:w-auto">
+                <AreaPerformanceCircle 
+                  subject={item.area} 
+                  percentage={item.percent} 
+                  subtitle={item.subtitle} 
+                  onClick={() => handleAreaCardClick(item.area, item.key as SubjectArea)}
+                />
+              </div>
+            ))}
+          </div>
         </div>
       </section>
 
@@ -443,44 +439,89 @@ export function RevieweePortal({ data, onLogout }: { data: RevieweeData, onLogou
     </div>
   );
 
+  const navItems = [
+    { key: 'dashboard', label: 'Home', icon: <LayoutDashboard size={18} /> },
+    { key: 'scores', label: 'Scores', icon: <ClipboardList size={18} /> },
+    { key: 'profile', label: 'Profile', icon: <User size={18} /> },
+  ];
+
+  const handleMessengerClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    // Basic handler for Messenger if needed
+  };
+
   return (
-    <PortalLayout
-      title="Reviewee Portal"
-      seqId={revieweeData.seq_id || revieweeData.seqId || revieweeData.id_number}
-      idNumber={getDisplayIdNumber("Reviewee", revieweeData)}
-      subtitle={
-        <>
-          Welcome back, {revieweeName}! 👋
-        </>
-      }
-      role="Reviewee"
-      roleDetail={revieweeName}
-      activeTab={activeTab}
-      onTabChange={handleTabChange}
-      navItems={navItems}
-      footerItems={footerItems}
-      onLogout={onLogout}
-      notificationCount={unreadCount}
-      notifications={notifications}
-      photoURL={revieweeData?.photo_url || revieweeData?.photoUrl}
-      db={firestoreDb}
-    >
-      <div className="relative">
-         {activeTab === "dashboard" && renderDashboard()}
-         {activeTab === "my-scores" && (
-           <MyScoresPage 
-             revieweeData={revieweeData} 
-             scores={scores}
-           />
-         )}
+    <div className="flex h-[100dvh] w-full flex-col bg-slate-50 overflow-hidden">
+      {/* Compact Mobile Header */}
+      <header className="sticky top-0 z-40 flex h-auto min-h-[64px] items-center justify-between border-b border-slate-200 bg-white/95 px-4 py-3 backdrop-blur-md shrink-0">
+        <div className="flex items-center gap-3 min-w-0 flex-1">
+          <UserAvatar 
+            photoURL={revieweeData?.photo_url || revieweeData?.photoUrl} 
+            altText={revieweeName} 
+            size={36} 
+            className="h-9 w-9 shrink-0 rounded-xl object-cover border border-slate-100 bg-white shadow-sm" 
+          />
+          <div className="flex flex-col min-w-0">
+            <h1 className="truncate text-sm font-bold tracking-tight text-slate-900">{revieweeName}</h1>
+            <span className="truncate text-xs font-medium text-slate-500 mt-0.5">ID: {getDisplayIdNumber("Reviewee", revieweeData) || 'No ID'}</span>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 shrink-0 ml-3">
+          <div className="relative group">
+            <a
+              href="https://www.messenger.com/j/AbaK9Q9EUN0N4VmQ/?send_source=gc%3Acopy_invite_link_c"
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={handleMessengerClick}
+              className="relative flex h-9 w-9 items-center justify-center rounded-xl bg-slate-50 text-slate-600 hover:bg-slate-100 transition-colors select-none"
+              title="Open Messenger"
+            >
+              <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-blue-600">
+                <path d="M12 2C6.36 2 2 6.13 2 11.7c0 2.91 1.34 5.57 3.51 7.37v3.75c0 .35.39.55.68.34l3.37-2.48c.8.23 1.63.35 2.48.35 5.64 0 10-4.13 10-9.7S17.64 2 12 2zm1.18 12.87l-2.6-2.77-5.07 2.77 5.57-5.91 2.62 2.77 5.05-2.77-5.57 5.91z" />
+              </svg>
+            </a>
+          </div>
+          
+          <button
+            onClick={onLogout}
+            className="flex h-9 w-9 items-center justify-center rounded-xl bg-rose-50 text-rose-600 hover:bg-rose-100 transition-colors"
+            title="Sign Out"
+          >
+            <LogOut size={16} />
+          </button>
+        </div>
+      </header>
+
+      {/* Main Content Area */}
+      <main className="flex-1 overflow-y-auto scroll-smooth px-4 pb-[calc(80px+env(safe-area-inset-bottom))] pt-6 custom-scrollbar">
+        <div className="mx-auto max-w-5xl">
+          {activeTab === "dashboard" && renderDashboard()}
+          {activeTab === "my-scores" && (
+            <MyScoresPage 
+              revieweeData={revieweeData} 
+              scores={scores}
+            />
+          )}
           {activeTab === "scores" && (
             <RevieweeScoresDashboard
               currentUser={revieweeData}
             />
           )}
-         {activeTab === "progress" && renderProgress()}
-         {activeTab === "results" && renderResults()}
-         {activeTab === "profile" && <ProfileDashboard currentUser={revieweeData} onUpdate={setRevieweeData} />}
+          {activeTab === "profile" && <ProfileDashboard currentUser={revieweeData} onUpdate={setRevieweeData} />}
+        </div>
+      </main>
+
+      {/* Touch-Friendly Bottom Navigation */}
+      <div className="block">
+        <PortalBottomMenu
+          items={navItems.map(item => ({
+            id: item.key,
+            label: item.label,
+            icon: item.icon,
+          }))}
+          activeId={activeTab === 'my-scores' ? 'scores' : activeTab}
+          onSelect={handleTabChange}
+        />
       </div>
 
       {selectedSubjectBreakdown && (
@@ -496,6 +537,6 @@ export function RevieweePortal({ data, onLogout }: { data: RevieweeData, onLogou
           totalPossible={selectedSubjectBreakdown.totalPossible}
         />
       )}
-    </PortalLayout>
+    </div>
   );
 }

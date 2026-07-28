@@ -14,6 +14,38 @@ export type CanonicalUserIdentity = {
   isArchived?: boolean;
 };
 
+export const INVALID_MIDDLE_NAME_VALUES = new Set([
+  "",
+  "blank",
+  "null",
+  "undefined",
+  "n/a",
+  "none",
+  "na",
+  "-",
+  "—",
+  "[object object]",
+]);
+
+export function cleanOptionalName(value: unknown): string {
+  const cleaned = String(value ?? "").trim();
+  if (INVALID_MIDDLE_NAME_VALUES.has(cleaned.toLowerCase())) {
+    return "";
+  }
+  return cleaned;
+}
+
+export function formatMiddleName(value: unknown): string {
+  const cleaned = cleanOptionalName(value);
+  return cleaned || "-";
+}
+
+export function normalizeForSort(value: unknown): string {
+  return String(value ?? "")
+    .trim()
+    .toLocaleLowerCase();
+}
+
 export function normalizeIdNumber(value: unknown): string {
   if (value === undefined || value === null) return "";
   return String(value).trim();
@@ -28,49 +60,90 @@ export function formatFullName({
   middleName?: string;
   lastName?: string;
 }): string {
+  const first = String(firstName || "").trim().toUpperCase();
+  const middle = cleanOptionalName(middleName).toUpperCase();
+  const last = String(lastName || "").trim().toUpperCase();
+
+  const middleInitial = middle ? `${middle.charAt(0)}.` : "";
   return [
-    firstName || "",
-    middleName || "",
-    lastName || "",
+    first,
+    middleInitial,
+    last,
   ]
-    .map(s => String(s).trim())
     .filter(Boolean)
     .join(" ")
     .replace(/\s+/g, " ")
-    .trim();
+    .trim()
+    .toUpperCase();
 }
 
 export function formatFormalName({
   firstName,
   middleName,
   lastName,
+  suffix,
   fallbackFullName,
 }: {
   firstName?: unknown;
   middleName?: unknown;
   lastName?: unknown;
+  suffix?: unknown;
   fallbackFullName?: unknown;
 }): string {
-  const first = String(firstName ?? "").trim();
-  const middle = String(middleName ?? "").trim();
-  const last = String(lastName ?? "").trim();
-  const fallback = String(fallbackFullName ?? "").trim();
+  const first = String(firstName ?? "").trim().toUpperCase();
+  const middle = cleanOptionalName(middleName).toUpperCase();
+  const last = String(lastName ?? "").trim().toUpperCase();
+  const suf = String(suffix ?? "").trim().toUpperCase();
+  const fallback = String(fallbackFullName ?? "").trim().toUpperCase();
 
-  const givenNames = [first, middle].filter(Boolean).join(" ");
+  const middleInitial = middle ? `${middle.charAt(0)}.` : "";
+  const lastWithSuffix = [last, suf].filter(Boolean).join(" ");
 
-  if (last && givenNames) {
-    return `${last}, ${givenNames}`;
+  if (lastWithSuffix && first) {
+    return `${lastWithSuffix}, ${first}${middleInitial ? ` ${middleInitial}` : ""}`
+      .replace(/\s+/g, " ")
+      .trim()
+      .toUpperCase();
   }
-  if (givenNames) {
-    return givenNames;
+  if (lastWithSuffix) {
+    return lastWithSuffix.toUpperCase();
   }
-  if (last) {
-    return last;
+  if (first) {
+    return `${first}${middleInitial ? ` ${middleInitial}` : ""}`.replace(/\s+/g, " ").trim().toUpperCase();
   }
   if (fallback) {
-    return fallback;
+    const cleanFallback = fallback
+      .replace(/\b(BLANK|NULL|UNDEFINED|N\/A|NONE|\[OBJECT OBJECT\])\b/gi, "")
+      .replace(/,\s*-?\s*\.?$/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    return (cleanFallback || "UNKNOWN USER").toUpperCase();
   }
-  return "Unknown User";
+  return "UNKNOWN USER";
+}
+
+export function compareUsersAlphabetically(a: any, b: any): number {
+  const aNorm = resolveCanonicalUserIdentity(a);
+  const bNorm = resolveCanonicalUserIdentity(b);
+
+  const lastNameCompare = normalizeForSort(aNorm.lastName).localeCompare(
+    normalizeForSort(bNorm.lastName)
+  );
+  if (lastNameCompare !== 0) return lastNameCompare;
+
+  const firstNameCompare = normalizeForSort(aNorm.firstName).localeCompare(
+    normalizeForSort(bNorm.firstName)
+  );
+  if (firstNameCompare !== 0) return firstNameCompare;
+
+  const middleNameCompare = normalizeForSort(cleanOptionalName(aNorm.middleName)).localeCompare(
+    normalizeForSort(cleanOptionalName(bNorm.middleName))
+  );
+  if (middleNameCompare !== 0) return middleNameCompare;
+
+  return normalizeForSort(aNorm.idNumber || aNorm.userDocId || a?.doc_id || a?.uid).localeCompare(
+    normalizeForSort(bNorm.idNumber || bNorm.userDocId || b?.doc_id || b?.uid)
+  );
 }
 
 export function isValidRevieweeRecord(user: any): boolean {
@@ -209,13 +282,15 @@ export function resolveCanonicalUserIdentity(user: any): CanonicalUserIdentity {
     user.givenName ??
     user.given_name ??
     ""
-  ).trim();
+  ).trim().toUpperCase();
 
-  const middleName = String(
+  const middleName = cleanOptionalName(
     user.middleName ??
     user.middle_name ??
+    user.middleInitial ??
+    user.middle_initial ??
     ""
-  ).trim();
+  ).toUpperCase();
 
   const lastName = String(
     user.lastName ??
@@ -224,7 +299,7 @@ export function resolveCanonicalUserIdentity(user: any): CanonicalUserIdentity {
     user.familyName ??
     user.family_name ??
     ""
-  ).trim();
+  ).trim().toUpperCase();
 
   const email = String(
     user.email ??
@@ -258,8 +333,7 @@ export function resolveCanonicalUserIdentity(user: any): CanonicalUserIdentity {
   const profilePicture = user.profilePicture || user.profile_picture || user.avatar || user.photoURL || "";
   const isArchived = Boolean(user.isArchived || user.is_archived);
 
-  // Fallback full name calculation if explicit fullName is missing or needs formatting
-  let fullName = String(
+  const rawFullName = String(
     user.fullName ??
     user.full_name ??
     user.displayName ??
@@ -268,9 +342,13 @@ export function resolveCanonicalUserIdentity(user: any): CanonicalUserIdentity {
     ""
   ).trim();
 
-  if (!fullName || (firstName && lastName && fullName === `${firstName} ${lastName}`)) {
-    fullName = formatFullName({ firstName, middleName, lastName });
-  }
+  const fullName = formatFormalName({
+    firstName,
+    middleName,
+    lastName,
+    suffix: user.suffix || user.nameExtension,
+    fallbackFullName: rawFullName,
+  });
 
   return {
     userDocId,

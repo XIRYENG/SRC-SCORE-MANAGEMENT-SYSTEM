@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { Users, Search, Shield, UserCheck, Mail, Building2, MapPin, CheckCircle2, Filter, Wrench, Trash2 } from 'lucide-react';
 import { getUserRole } from '../utils/roleUtils';
 import { normalizeNameForComparison } from '../utils/nameNormalization';
-import { resolveCanonicalUserIdentity, isValidUserRecord } from '../services/userIdentityResolver';
+import { resolveCanonicalUserIdentity, isValidUserRecord, formatMiddleName, compareUsersAlphabetically, formatFormalName } from '../services/userIdentityResolver';
 import { SimpleTable } from './DashboardKit';
 import { RepairEmailModal } from './RepairEmailModal';
 import { UserAvatar } from './UserAvatar';
@@ -25,7 +25,7 @@ export const AllUsersDirectory: React.FC<AllUsersDirectoryProps> = ({ users, loa
   const isAdminLoggedIn = loggedInRole === 'Admin';
 
   const filteredUsers = useMemo(() => {
-    return users.filter((u) => {
+    const list = users.filter((u) => {
       const status = String(u.accountStatus || u.status || '').toLowerCase();
       if (status === 'merged' || status === 'deleted' || u.isDeleted || u.deleted) {
         return false;
@@ -39,7 +39,6 @@ export const AllUsersDirectory: React.FC<AllUsersDirectoryProps> = ({ users, loa
       }
       if (!searchQuery.trim()) return true;
       const q = searchQuery.toLowerCase().trim();
-      const qNorm = normalizeNameForComparison(q);
       const canonical = resolveCanonicalUserIdentity(u);
 
       const matchesName = canonical.fullName.toLowerCase().includes(q) || canonical.firstName.toLowerCase().includes(q) || canonical.lastName.toLowerCase().includes(q);
@@ -48,14 +47,14 @@ export const AllUsersDirectory: React.FC<AllUsersDirectoryProps> = ({ users, loa
       const school = canonical.school.toLowerCase();
       return matchesName || email.includes(q) || seqId.includes(q) || school.includes(q);
     });
+
+    return [...list].sort(compareUsersAlphabetically);
   }, [users, searchQuery, roleFilter]);
 
   const rows = filteredUsers.map((u) => {
     const role = getUserRole(u);
     const canonical = resolveCanonicalUserIdentity(u);
-    const firstName = canonical.firstName || '—';
-    const middleName = canonical.middleName || 'blank';
-    const lastName = canonical.lastName || '—';
+    const name = formatFormalName(canonical);
     const email = canonical.email || 'No email';
     const seqId = canonical.idNumber || u.doc_id || '—';
     const school = canonical.school || '—';
@@ -68,10 +67,7 @@ export const AllUsersDirectory: React.FC<AllUsersDirectoryProps> = ({ users, loa
     return {
       originalUser: u,
       id: u.uid || u.doc_id || seqId,
-      firstName,
-      middleName,
-      lastName,
-      fullName: canonical.fullName,
+      name,
       email,
       seqId,
       school,
@@ -156,19 +152,9 @@ export const AllUsersDirectory: React.FC<AllUsersDirectoryProps> = ({ users, loa
               render: (r) => <span className="font-mono text-xs font-bold text-slate-700">{r.seqId}</span>,
             },
             {
-              key: 'firstName',
-              header: 'First Name',
-              render: (r) => <span className="font-bold text-slate-900">{r.firstName}</span>,
-            },
-            {
-              key: 'middleName',
-              header: 'Middle Name',
-              render: (r) => <span className="text-slate-600 font-medium">{r.middleName}</span>,
-            },
-            {
-              key: 'lastName',
-              header: 'Last Name',
-              render: (r) => <span className="font-bold text-slate-900">{r.lastName}</span>,
+              key: 'name',
+              header: 'Name',
+              render: (r) => <span className="font-bold text-slate-900">{r.name}</span>,
             },
             {
               key: 'email',

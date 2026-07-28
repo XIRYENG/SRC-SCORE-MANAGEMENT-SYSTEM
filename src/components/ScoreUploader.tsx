@@ -1563,11 +1563,11 @@ export const ScoreUploader: React.FC<ScoreUploaderProps> = ({
                   return canonical.normalizedName.includes(qNorm) || extraSearch.includes(qNorm);
                 })
                 .slice(0, 30)
-                .map((user) => {
+                .map((user, idx) => {
                   const canonical = getCanonicalFullName(user);
                   return (
                   <div
-                    key={user.doc_id || user.uid}
+                    key={user.doc_id || user.uid ? `${user.doc_id || user.uid}_${idx}` : `u_${idx}`}
                     className="p-3 hover:bg-blue-50/50 flex items-center justify-between transition-colors cursor-pointer"
                     onClick={() => handleApplyManualMatch(manualMatchRowIdx, user)}
                   >

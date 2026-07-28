@@ -28,6 +28,7 @@ export type AnimatedSelectOption = {
 };
 
 type AnimatedSelectProps = {
+  id?: string;
   value: string;
   options: AnimatedSelectOption[];
   placeholder?: string;
@@ -43,13 +44,14 @@ type AnimatedSelectProps = {
 };
 
 export function AnimatedSelect({
+  id,
   value,
   options,
   placeholder = "Select option",
   searchPlaceholder = "Search...",
   label,
   searchable = true,
-  mobileMode = "bottom-sheet",
+  mobileMode = "popover",
   variant = "default",
   disabled = false,
   onChange,
@@ -67,20 +69,24 @@ export function AnimatedSelect({
     open: isOpen,
     onOpenChange: setIsOpen,
     placement: "bottom-start",
+    strategy: "fixed",
+    transform: false,
     whileElementsMounted: autoUpdate,
     middleware: [
       offset(6),
       flip({
-        fallbackPlacements: ["top-start", "bottom-end", "top-end"],
+        fallbackPlacements: ["bottom-end", "top-start", "top-end"],
         padding: 12,
       }),
       shift({ padding: 12 }),
       size({
         padding: 12,
-        apply({ availableWidth, availableHeight, elements }) {
+        apply({ rects, availableWidth, availableHeight, elements }) {
           Object.assign(elements.floating.style, {
-            maxWidth: `${Math.max(0, availableWidth)}px`,
-            maxHeight: `${Math.max(0, availableHeight)}px`,
+            width: `${rects.reference.width}px`,
+            minWidth: `${Math.max(120, rects.reference.width)}px`,
+            maxWidth: `${Math.min(360, Math.max(rects.reference.width, availableWidth))}px`,
+            maxHeight: `${Math.min(320, availableHeight)}px`,
           });
         },
       }),
@@ -125,6 +131,7 @@ export function AnimatedSelect({
   return (
     <div className={cn("relative w-full min-w-0", className)}>
       <button
+        id={id}
         ref={refs.setReference}
         {...getReferenceProps()}
         disabled={disabled}
@@ -146,7 +153,7 @@ export function AnimatedSelect({
         />
       </button>
 
-      <FloatingPortal>
+      <FloatingPortal root={typeof document !== "undefined" && document.fullscreenElement ? (document.fullscreenElement as HTMLElement) : undefined}>
         <AnimatePresence>
           {isOpen && (
             <>
@@ -255,86 +262,90 @@ export function AnimatedSelect({
                 </div>
               ) : (
                 <FloatingFocusManager context={context} modal={false}>
-                  <motion.div
+                  <div
                     ref={refs.setFloating}
                     style={floatingStyles}
-                    initial={{ opacity: 0, y: 8, scale: 0.96 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    exit={{ opacity: 0, y: 4, scale: 0.98 }}
-                    transition={{ duration: 0.15, ease: "easeOut" }}
                     {...getFloatingProps()}
-                    className={cn(
-                      "z-[950] flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl outline-none",
-                      variant === "compact-popover" ? "w-[min(340px,calc(100vw-24px))] max-h-[min(70dvh,520px)]" : "w-[320px]"
-                    )}
+                    className="z-[9999]"
                   >
-                    {variant === "compact-popover" && (
-                      <div className="sticky top-0 z-10 flex items-center justify-between border-b bg-white px-4 py-3">
-                        <span className="text-sm font-bold text-slate-900">{label || placeholder}</span>
-                        <button
-                          onClick={() => setIsOpen(false)}
-                          className="flex h-8 w-8 items-center justify-center rounded-full hover:bg-slate-100 transition-colors"
-                        >
-                          <X size={16} />
-                        </button>
-                      </div>
-                    )}
-                    {searchable && (
-                      <div className="shrink-0 border-b border-slate-100 p-2">
-                        <div className="relative flex items-center">
-                          <Search className="absolute left-2.5 h-3.5 w-3.5 text-slate-400" />
-                          <input
-                            ref={inputRef}
-                            value={query}
-                            onChange={(e) => setQuery(e.target.value)}
-                            placeholder={searchPlaceholder}
-                            className="h-9 w-full rounded-lg border border-slate-100 bg-slate-50 pl-8 pr-8 text-xs font-medium outline-none focus:border-teal-500 transition-all"
-                          />
-                          {query && (
-                            <button
-                              onClick={() => setQuery("")}
-                              className="absolute right-2 p-1 text-slate-400 hover:text-slate-600"
-                            >
-                              <X size={12} />
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    )}
-
-                    <div className="max-h-[300px] min-h-0 flex-1 overflow-y-auto overscroll-contain py-1 scrollbar-thin">
-                      {filteredOptions.length > 0 ? (
-                        filteredOptions.map((option) => (
+                    <motion.div
+                      initial={{ opacity: 0, y: 8, scale: 0.96 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: 4, scale: 0.98 }}
+                      transition={{ duration: 0.15, ease: "easeOut" }}
+                      className={cn(
+                        "flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl outline-none dark:bg-slate-900 dark:border-slate-800",
+                        variant === "compact-popover" ? "w-[min(340px,calc(100vw-24px))] max-h-[min(70dvh,520px)]" : "w-full"
+                      )}
+                    >
+                      {variant === "compact-popover" && (
+                        <div className="sticky top-0 z-10 flex items-center justify-between border-b bg-white px-4 py-3">
+                          <span className="text-sm font-bold text-slate-900">{label || placeholder}</span>
                           <button
-                            key={option.value}
-                            onClick={() => handleSelect(option.value)}
-                            className={cn(
-                              "flex w-full items-center justify-between px-3 py-2 text-left transition-colors",
-                              option.value === value
-                                ? "bg-teal-50 text-teal-700"
-                                : "text-slate-600 hover:bg-slate-50"
-                            )}
+                            onClick={() => setIsOpen(false)}
+                            className="flex h-8 w-8 items-center justify-center rounded-full hover:bg-slate-100 transition-colors"
                           >
-                            <span className={cn(
-                              "truncate text-xs",
-                              option.value === value ? "font-bold" : "font-medium"
-                            )}>
-                              {option.label}
-                            </span>
-                            {option.value === value && (
-                              <Check size={14} className="ml-2 shrink-0 text-teal-600" strokeWidth={3} />
-                            )}
+                            <X size={16} />
                           </button>
-                        ))
-                      ) : (
-                        <div className="p-4 text-center">
-                          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                            No results
-                          </p>
                         </div>
                       )}
-                    </div>
-                  </motion.div>
+                      {searchable && (
+                        <div className="shrink-0 border-b border-slate-100 p-2">
+                          <div className="relative flex items-center">
+                            <Search className="absolute left-2.5 h-3.5 w-3.5 text-slate-400" />
+                            <input
+                              ref={inputRef}
+                              value={query}
+                              onChange={(e) => setQuery(e.target.value)}
+                              placeholder={searchPlaceholder}
+                              className="h-9 w-full rounded-lg border border-slate-100 bg-slate-50 pl-8 pr-8 text-xs font-medium outline-none focus:border-teal-500 transition-all"
+                            />
+                            {query && (
+                              <button
+                                onClick={() => setQuery("")}
+                                className="absolute right-2 p-1 text-slate-400 hover:text-slate-600"
+                              >
+                                <X size={12} />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="max-h-[300px] min-h-0 flex-1 overflow-y-auto overscroll-contain py-1 scrollbar-thin">
+                        {filteredOptions.length > 0 ? (
+                          filteredOptions.map((option) => (
+                            <button
+                              key={option.value}
+                              onClick={() => handleSelect(option.value)}
+                              className={cn(
+                                "flex w-full items-center justify-between px-3 py-2 text-left transition-colors",
+                                option.value === value
+                                  ? "bg-teal-50 text-teal-700"
+                                  : "text-slate-600 hover:bg-slate-50"
+                              )}
+                            >
+                              <span className={cn(
+                                "truncate text-xs",
+                                option.value === value ? "font-bold" : "font-medium"
+                              )}>
+                                {option.label}
+                              </span>
+                              {option.value === value && (
+                                <Check size={14} className="ml-2 shrink-0 text-teal-600" strokeWidth={3} />
+                              )}
+                            </button>
+                          ))
+                        ) : (
+                          <div className="p-4 text-center">
+                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                              No results
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    </motion.div>
+                  </div>
                 </FloatingFocusManager>
               )}
             </>

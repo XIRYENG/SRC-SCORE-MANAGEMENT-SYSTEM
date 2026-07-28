@@ -7,7 +7,7 @@ export type ScoreValue = {
 export type AggregatedAreaRating = {
   totalEarned: number;
   totalPossible: number;
-  rating: number | null;
+  rating: number;
   completedCount: number;
 };
 
@@ -52,7 +52,7 @@ export function calculateAggregatedAreaRating(
             totalEarned /
             totalPossible
           ) * 100
-        : null,
+        : 0,
     completedCount,
   };
 }

@@ -43,7 +43,7 @@ import { doc, onSnapshot } from 'firebase/firestore';
 import { DEFAULT_GRADE_WEIGHTS, GradeWeights, SubjectArea, GRADE_CATEGORY_LABELS, GradeCategoryKey } from '../utils/gradeCalculation';
 import { calculateAreaDashboardData, calculateRevieweeArea } from '../utils/calculateRevieweeArea';
 import { getResolvedScore } from '../utils/scoreFieldResolver';
-import { AreaPerformanceCircle } from './AreaPerformanceCircle';
+import { BoardSubjectAreasSection } from './BoardSubjectAreasSection';
 import { AreaPerformanceModal } from './performance/AreaPerformanceModal';
 import { ScoreManagementDashboard } from './admin/ScoreManagementDashboard';
 
@@ -341,20 +341,17 @@ export function StaffPortal({ data, onLogout, onOpenSyncModal, syncProps }: Staf
           </section>
 
           {/* Scores by Area */}
-          <section className="rounded-[1.5rem] border border-slate-200 bg-white p-5 shadow-sm">
-             <SectionHeader title="Scores by Area" onViewAll={() => handleTabSelect('leaderboard')} />
-             <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
-                {areaScores.slice(0, 6).map((item) => (
-                   <AreaPerformanceCircle 
-                    key={item.area} 
-                    subject={item.area} 
-                    percentage={item.percent} 
-                    revieweeCount={item.count} 
-                    onClick={() => handleAreaCardClick(item.area, item.key as SubjectArea)}
-                   />
-                ))}
-             </div>
-          </section>
+          <BoardSubjectAreasSection
+            areas={areaScores.slice(0, 6).map((item) => ({
+              key: item.area,
+              area: item.area,
+              title: item.title,
+              percent: item.percent,
+              count: item.count,
+              onClick: () => handleAreaCardClick(item.area, item.key as SubjectArea),
+            }))}
+            onViewAll={() => handleTabSelect('leaderboard')}
+          />
         </div>
 
         {/* Manual Score Entry & Recent Reviewees */}

@@ -42,8 +42,8 @@ export function calculateDailyEvaluationAggregate(scores: SingleScoreEntry[]): A
     return {
       totalEarned: 0,
       totalPossible: 0,
-      rating: null,
-      ratingFormatted: 'N/A',
+      rating: 0,
+      ratingFormatted: '0.00%',
       combinedFormatted: '0/0',
       validCount: 0,
       missingCount,

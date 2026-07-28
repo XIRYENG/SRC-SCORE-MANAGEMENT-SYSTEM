@@ -18,7 +18,7 @@ import { firestoreDb, initFirebaseClient, clientDeleteUser } from '../utils/fire
 import type { RevieweeData } from '../types';
 import { normalizeRole, isAdmin, isStaff, isAdminLike, getUserRole, hasScoreEditPermission } from '../utils/roleUtils';
 import { getCanonicalFullName } from '../utils/nameNormalization';
-import { resolveCanonicalUserIdentity, isValidScoreManagementUser, isValidRevieweeRecord, formatFormalName } from '../services/userIdentityResolver';
+import { resolveCanonicalUserIdentity, isValidScoreManagementUser, isValidRevieweeRecord, formatFormalName, compareUsersAlphabetically, formatMiddleName, cleanOptionalName } from '../services/userIdentityResolver';
 import { getResolvedScore, isScoreAreaActivated, getScoreFieldName, ScoreAreaActivation, getResolvedDetailedScore } from '../utils/scoreFieldResolver';
 import { DEFAULT_GRADE_WEIGHTS, GradeWeights } from '../utils/gradeCalculation';
 import { calculateRevieweeArea } from '../utils/calculateRevieweeArea';
@@ -944,8 +944,8 @@ export const SyncModal: React.FC<SyncModalProps> = ({
             valB = idB;
         }
       } else if (sortColumn === 'name') {
-        valA = getSortableName(a);
-        valB = getSortableName(b);
+        const comp = compareUsersAlphabetically(a, b);
+        return sortDirection === 'asc' ? comp : -comp;
       } else if (sortColumn === 'school') {
         valA = String(a.school_name || '').toLowerCase();
         valB = String(b.school_name || '').toLowerCase();
@@ -998,11 +998,7 @@ export const SyncModal: React.FC<SyncModalProps> = ({
       if (valA < valB) return sortDirection === 'asc' ? -1 : 1;
       if (valA > valB) return sortDirection === 'asc' ? 1 : -1;
 
-      const nameA = getSortableName(a);
-      const nameB = getSortableName(b);
-      if (nameA < nameB) return -1;
-      if (nameA > nameB) return 1;
-      return 0;
+      return compareUsersAlphabetically(a, b);
     });
   }, [allUsers, searchUserQuery, sortColumn, sortDirection, filterSchool, activeTab, selectedCategories, gradeWeights]);
 
@@ -1018,9 +1014,10 @@ export const SyncModal: React.FC<SyncModalProps> = ({
     
     let rows = usersToExport.map(u => {
         const canonical = resolveCanonicalUserIdentity(u);
+        const formattedMiddle = formatMiddleName(canonical.middleName);
         const row = [
           `"${canonical.firstName.toUpperCase()}"`,
-          `"${canonical.middleName.toUpperCase()}"`,
+          `"${formattedMiddle === '-' ? '-' : formattedMiddle.toUpperCase()}"`,
           `"${canonical.lastName.toUpperCase()}"`,
           `"${canonical.idNumber}"`,
           `"${(mappings[canonical.school] || canonical.school).toUpperCase()}"`,
@@ -1058,7 +1055,7 @@ export const SyncModal: React.FC<SyncModalProps> = ({
 
           return [
             `${i + 1}`,
-            `"${canonical.lastName.toUpperCase()}, ${canonical.firstName.toUpperCase()} ${canonical.middleName.toUpperCase()}"`,
+            `"${formatFormalName(canonical).toUpperCase()}"`,
             `"${(mappings[canonical.school] || canonical.school).toUpperCase()}"`,
             `"${canonical.idNumber}"`,
             `"${formatScore(clj)}"`, `"${clj.weightedContribution.toFixed(2)}%"`,
@@ -1094,11 +1091,12 @@ export const SyncModal: React.FC<SyncModalProps> = ({
         csvHeaders.push('"Overall Grade"');
 
         rows = usersToExport.map((u, i) => {
+          const canonical = resolveCanonicalUserIdentity(u);
           const row = [
             `${i + 1}`,
-            `"${(u.last_name || '').toUpperCase()}, ${(u.first_name || '').toUpperCase()} ${u.middle_name ? (u.middle_name).toUpperCase() : ''}"`,
-            `"${(mappings[u.school_name || ''] || u.school_name || '').toUpperCase()}"`,
-            `"${(u.seq_id || '').replace(/\D/g, '')}"`
+            `"${formatFormalName(canonical).toUpperCase()}"`,
+            `"${(mappings[canonical.school] || canonical.school).toUpperCase()}"`,
+            `"${canonical.idNumber}"`
           ];
 
           SUBJECT_KEYS.forEach(subj => {
@@ -1684,10 +1682,11 @@ function formatExamDates(dateStrings: string[]): string {
             tableColumn.push("Registered At");
         }
         let tableRows = usersToExport.map(u => {
+          const canonical = resolveCanonicalUserIdentity(u);
           const row = [
-            u.seq_id || '',
-            `${(u.last_name || '').toUpperCase()}, ${(u.first_name || '').toUpperCase()} ${u.middle_name ? u.middle_name.toUpperCase() : ''}`,
-            (mappings[u.school_name || ''] || u.school_name || '').toUpperCase(),
+            canonical.idNumber || u.seq_id || '',
+            formatFormalName(canonical).toUpperCase(),
+            (mappings[canonical.school || ''] || canonical.school || '').toUpperCase(),
             u.is_synced ? 'SYNCED' : 'PENDING'
           ];
           if (activeTab === 'details' || activeTab === 'archived') {
@@ -1733,6 +1732,7 @@ function formatExamDates(dateStrings: string[]): string {
             ];
             
             tableRows = usersToExport.map((u, i) => {
+              const canonical = resolveCanonicalUserIdentity(u);
               const detailed = getCategoryDetailedScores(u, currentCat);
 
               const clj = calculateAreaContribution(detailed.clj.earnedScore, detailed.clj.possiblePoints, 'clj');
@@ -1748,9 +1748,9 @@ function formatExamDates(dateStrings: string[]): string {
 
               return [
                 String(i + 1),
-                `${(u.last_name || '').toUpperCase()}, ${(u.first_name || '').toUpperCase()} ${u.middle_name ? (u.middle_name).toUpperCase() : ''}`,
-                (mappings[u.school_name || ''] || u.school_name || '').toUpperCase(),
-                u.seq_id || '',
+                formatFormalName(canonical).toUpperCase(),
+                (mappings[canonical.school || ''] || canonical.school || '').toUpperCase(),
+                canonical.idNumber || u.seq_id || '',
                 formatScore(clj), `${clj.weightedContribution.toFixed(2)}%`,
                 formatScore(lea), `${lea.weightedContribution.toFixed(2)}%`,
                 formatScore(cdi), `${cdi.weightedContribution.toFixed(2)}%`,
@@ -1789,11 +1789,12 @@ function formatExamDates(dateStrings: string[]): string {
             headArray = [row1, row2];
 
             tableRows = usersToExport.map((u, i) => {
+              const canonical = resolveCanonicalUserIdentity(u);
               const row = [
                 String(i + 1),
-                `${(u.last_name || '').toUpperCase()}, ${(u.first_name || '').toUpperCase()} ${u.middle_name ? (u.middle_name).toUpperCase() : ''}`,
-                (mappings[u.school_name || ''] || u.school_name || '').toUpperCase(),
-                u.seq_id || ''
+                formatFormalName(canonical).toUpperCase(),
+                (mappings[canonical.school || ''] || canonical.school || '').toUpperCase(),
+                canonical.idNumber || u.seq_id || ''
               ];
 
               SUBJECT_KEYS.forEach(subj => {
@@ -1938,8 +1939,9 @@ function formatExamDates(dateStrings: string[]): string {
 
       const tableBodyHtml = usersToExport.map((u, idx) => {
         const seqNum = idx + 1;
-        const schoolName = (abbreviations[(mappings[u.school_name || ''] || u.school_name || '').toUpperCase()] || (mappings[u.school_name || ''] || u.school_name || '')).toUpperCase();
-        const fullName = `${(u.last_name || '').toUpperCase()}, ${(u.first_name || '').toUpperCase()} ${u.middle_name ? (u.middle_name).toUpperCase() : ''}`;
+        const canonical = resolveCanonicalUserIdentity(u);
+        const schoolName = (abbreviations[(mappings[canonical.school || ''] || canonical.school || '').toUpperCase()] || (mappings[canonical.school || ''] || canonical.school || '')).toUpperCase();
+        const fullName = formatFormalName(canonical).toUpperCase();
 
         if (activeTab === 'scores') {
           if (selectedCategories.length === 1) {
@@ -5039,7 +5041,7 @@ function formatExamDates(dateStrings: string[]): string {
 
                                         <div className="text-[10px] text-slate-600 bg-slate-50 p-2 rounded-lg border border-slate-100 space-y-1">
                                           <div className="flex justify-between gap-2"><span className="font-semibold text-slate-400">First:</span> <span className="font-bold text-slate-800 text-right truncate">{r.first_name || r.firstName || r['First Name'] || <span className="italic text-slate-400">None</span>}</span></div>
-                                          <div className="flex justify-between gap-2"><span className="font-semibold text-slate-400">Middle:</span> <span className="font-bold text-slate-800 text-right truncate">{r.middle_name || r.middleName || r['Middle Name'] || <span className="italic text-slate-400">None</span>}</span></div>
+                                          <div className="flex justify-between gap-2"><span className="font-semibold text-slate-400">Middle:</span> <span className="font-bold text-slate-800 text-right truncate">{formatMiddleName(r.middle_name || r.middleName || r['Middle Name'])}</span></div>
                                           <div className="flex justify-between gap-2"><span className="font-semibold text-slate-400">Last:</span> <span className="font-bold text-slate-800 text-right truncate">{r.last_name || r.lastName || r['Last Name'] || <span className="italic text-slate-400">None</span>}</span></div>
                                           {(r.name || r.full_name || r.fullName || r.displayName) && (
                                             <div className="flex justify-between gap-2 border-t border-slate-200/60 pt-1 mt-1"><span className="font-semibold text-slate-400">Full field:</span> <span className="font-bold text-slate-800 text-right truncate">{r.name || r.full_name || r.fullName || r.displayName}</span></div>
@@ -5124,7 +5126,7 @@ function formatExamDates(dateStrings: string[]): string {
 
                                         <div className="text-[10px] text-slate-600 bg-slate-50 p-2 rounded-lg border border-slate-100 space-y-1">
                                           <div className="flex justify-between"><span className="font-semibold text-slate-400">First:</span> <span className="font-bold text-slate-800 capitalize">{r.first_name || r.firstName || r['First Name'] || 'N/A'}</span></div>
-                                          <div className="flex justify-between"><span className="font-semibold text-slate-400">Middle:</span> <span className="font-bold text-slate-800 capitalize">{r.middle_name || r.middleName || r['Middle Name'] || <span className="italic text-slate-400">None</span>}</span></div>
+                                          <div className="flex justify-between"><span className="font-semibold text-slate-400">Middle:</span> <span className="font-bold text-slate-800 capitalize">{formatMiddleName(r.middle_name || r.middleName || r['Middle Name'])}</span></div>
                                           <div className="flex justify-between"><span className="font-semibold text-slate-400">Last:</span> <span className="font-bold text-slate-800 capitalize">{r.last_name || r.lastName || r['Last Name'] || 'N/A'}</span></div>
                                         </div>
 

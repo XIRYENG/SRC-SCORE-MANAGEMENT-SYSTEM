@@ -43,7 +43,7 @@ export function AreaPerformanceCard({
       <div className="mt-4 flex items-end justify-between">
         <div>
           <p className="text-2xl font-black text-slate-900 tracking-tight">
-            {percentage.toFixed(1)}%
+            {(percentage || 0).toFixed(2)}%
           </p>
           <p className="text-[10px] font-semibold text-slate-500">
             {revieweeCount} Reviewees

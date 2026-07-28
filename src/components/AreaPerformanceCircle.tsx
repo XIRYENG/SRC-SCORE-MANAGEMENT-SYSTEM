@@ -45,10 +45,7 @@ export function AreaPerformanceCircle({
       circumference;
 
   const formatPercentage = (val: number): string => {
-    if (val >= 100) return "100%";
-    const formatted = val.toFixed(2);
-    if (formatted === "100.00") return "100%";
-    return `${formatted}%`;
+    return `${(val || 0).toFixed(2)}%`;
   };
 
   const displaySubject = subject === "CORAD" ? "CA" : subject;

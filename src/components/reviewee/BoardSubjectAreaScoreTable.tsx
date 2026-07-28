@@ -54,7 +54,7 @@ export function BoardSubjectAreaScoreTable({
               })}
               <td className="px-4 py-3 font-bold text-slate-700">{row.aggregate.totalEarned}/{row.aggregate.totalPossible}</td>
               <td className="px-4 py-3 font-black text-teal-700 sticky right-0 bg-white z-10 border-l border-slate-100">
-                {row.aggregate.rating !== null ? `${row.aggregate.rating.toFixed(2)}%` : 'N/A'}
+                {row.aggregate.rating !== null ? `${row.aggregate.rating.toFixed(2)}%` : '0.00%'}
               </td>
             </tr>
           ))}

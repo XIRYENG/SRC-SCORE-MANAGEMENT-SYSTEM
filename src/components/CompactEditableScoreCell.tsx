@@ -45,7 +45,7 @@ export function DetailedEditableScoreCell({
     subjectKey
   );
 
-  const hasSavedScore = result.earnedScore !== null;
+  const hasSavedScore = score.earnedScore !== null;
   const allowEditing = isAreaActivated && canEditScores;
 
   const actionLabel = hasSavedScore
@@ -58,11 +58,23 @@ export function DetailedEditableScoreCell({
     `Grade contribution: ${formatContribution(result.weightedContribution)}`,
   ].join("\n");
 
+  const isDailyEval = String(category || "").toLowerCase().includes("daily");
+
+  const displayScoreText = isDailyEval
+    ? `${score.earnedScore !== null ? score.earnedScore : 0}/${score.possiblePoints > 0 ? score.possiblePoints : 0}`
+    : `${hasSavedScore ? result.earnedScore : "___"}/${hasSavedScore ? result.possiblePoints : 0}`;
+
+  const displayRating = isDailyEval
+    ? (score.earnedScore !== null && score.possiblePoints > 0 
+        ? `${((score.earnedScore / score.possiblePoints) * 100).toFixed(2)}%`
+        : "0.00%")
+    : formatContribution(result.weightedContribution);
+
   return (
     <div className="flex min-w-[65px] sm:min-w-[75px] flex-col items-center justify-center py-0.5">
       <div className="flex items-center justify-center gap-1 whitespace-nowrap text-[11px]">
         <span className="font-bold text-slate-900">
-          {hasSavedScore ? result.earnedScore : "___"}/{hasSavedScore ? result.possiblePoints : 0}
+          {displayScoreText}
         </span>
 
         {allowEditing && (
@@ -89,9 +101,9 @@ export function DetailedEditableScoreCell({
 
       <span
         className="text-[10px] font-bold text-teal-700 cursor-help leading-tight"
-        title={tooltipText}
+        title={isDailyEval ? `Daily Evaluation Rating` : tooltipText}
       >
-        {formatContribution(result.weightedContribution)}
+        {displayRating}
       </span>
     </div>
   );
@@ -110,6 +122,7 @@ export type CompactEditableScoreCellProps = {
     currentScore: number | null;
     possiblePoints?: number;
   }) => void;
+  overrideScore?: ScoreValue;
 };
 
 export function CompactEditableScoreCell({
@@ -119,8 +132,9 @@ export function CompactEditableScoreCell({
   isAreaActivated,
   canEditScores,
   onEdit,
+  overrideScore,
 }: CompactEditableScoreCellProps) {
-  const detailedScore = getResolvedDetailedScore(reviewee, category, subject);
+  const detailedScore = overrideScore || getResolvedDetailedScore(reviewee, category, subject);
 
   const revieweeName =
     reviewee.fullName ||

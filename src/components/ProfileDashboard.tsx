@@ -223,7 +223,7 @@ export const ProfileDashboard: React.FC<ProfileDashboardProps> = ({ currentUser,
           </button>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="space-y-1.5">
             <label className="text-[10px] font-black uppercase tracking-widest text-slate-500">First Name</label>
             <input
@@ -255,7 +255,7 @@ export const ProfileDashboard: React.FC<ProfileDashboardProps> = ({ currentUser,
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-1.5">
             <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 flex items-center gap-1.5">
               <Mail size={13} className="text-teal-600" /> Email Address
@@ -287,7 +287,7 @@ export const ProfileDashboard: React.FC<ProfileDashboardProps> = ({ currentUser,
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-1.5">
             <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 flex items-center gap-1.5">
               <Building2 size={13} className="text-teal-600" /> School Name

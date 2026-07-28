@@ -344,7 +344,7 @@ export function MyScoresPage({ revieweeData, scores }: { revieweeData: RevieweeD
                             isSelected ? 'bg-teal-50/50 text-teal-700' : 'bg-slate-50 text-teal-600'
                           }`}
                         >
-                          {row.aggregate.rating !== null ? `${row.aggregate.rating.toFixed(2)}%` : <span className="text-slate-300">N/A</span>}
+                          {row.aggregate.rating !== null ? `${row.aggregate.rating.toFixed(2)}%` : '0.00%'}
                         </td>
                       </tr>
                     );

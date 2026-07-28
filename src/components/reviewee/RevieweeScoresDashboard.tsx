@@ -15,12 +15,12 @@ const SUBJECTS_BY_AREA: Record<string, { code: string; title: string }[]> = {
     { code: "CLJ 7", title: "Court Testimony" },
   ],
   "LEA": [
-    { code: "LEA 1", title: "Law Enforcement Organization and Administration" },
-    { code: "LEA 2", title: "Comparative Police System" },
+    { code: "LEA 1", title: "Law Enforcement Administration (Inter-Agency Approach)" },
+    { code: "LEA 2", title: "Comparative Models in Policing" },
     { code: "LEA 3", title: "Introduction to Industrial Security Concepts" },
-    { code: "LEA 4", title: "Law Enforcement Operations and Planning with Crime Mapping" },
-    { code: "LEA 5", title: "Police Patrol Plans and Operation" },
-    { code: "LEA 6", title: "Police Intelligence" },
+    { code: "LEA 4", title: "Law Enforcement Operation and Planning with Crime Mapping" },
+    { code: "CLFM 1", title: "Character Formation, Nationalism, and Patriotism" },
+    { code: "CLFM 2", title: "Leadership, Decision Making, Management, and Administration" },
   ],
   "CDI": [
     { code: "CDI 1", title: "Fundamentals of Criminal Investigation with Intelligence" },
@@ -243,7 +243,7 @@ export default function RevieweeScoresDashboard({ currentUser }: Props) {
                     </div>
                     <div>
                       <h3 className="font-black text-slate-900 text-sm">{stat.area}</h3>
-                      <p className="text-xs font-bold text-slate-900 mt-0.5">{stat.hasRecords ? `${stat.rating.toFixed(2)}%` : '-'}</p>
+                      <p className="text-xs font-bold text-slate-900 mt-0.5">{stat.hasRecords ? `${stat.rating.toFixed(2)}%` : '0.00%'}</p>
                       <p className={`text-[9px] font-bold mt-0.5 ${stat.hasRecords ? colorInfo.text : 'text-slate-400'}`}>
                         {stat.hasRecords ? colorInfo.label : 'No Data'}
                       </p>
@@ -338,7 +338,7 @@ export default function RevieweeScoresDashboard({ currentUser }: Props) {
                         {row.hasRecords ? (
                           <span className={getScoreColor(row.rating).text.replace('text-', 'text-')}>{row.rating.toFixed(2)}%</span>
                         ) : (
-                          <span className="text-slate-300">-</span>
+                          <span className="text-slate-400 font-bold">0.00%</span>
                         )}
                       </td>
                     </tr>

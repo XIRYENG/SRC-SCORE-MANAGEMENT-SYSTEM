@@ -240,7 +240,7 @@ const RevieweesWithoutScoreList: React.FC<RevieweesWithoutScoreListProps> = ({
                 const status = r.accountStatus || r.status || 'Active';
 
                 return (
-                  <tr key={r.id || r.uid || idx} className="hover:bg-slate-50 transition-colors">
+                  <tr key={r.doc_id || r.id || r.uid ? `${r.doc_id || r.id || r.uid}_${idx}` : `row_${idx}`} className="hover:bg-slate-50 transition-colors">
                     <td className="p-3 font-bold text-slate-900">{fullName}</td>
                     <td className="p-3 font-mono font-bold text-slate-800">
                       <span className="bg-slate-100 px-2 py-0.5 rounded text-slate-700">{idNum}</span>
@@ -1530,10 +1530,10 @@ export const ScoreImporter: React.FC<ScoreImporterProps> = ({
                   return canonical.normalizedName.includes(qNorm) || extraSearch.includes(qNorm);
                 })
                 .slice(0, 30)
-                .map(user => {
+                .map((user, idx) => {
                   const canonical = getCanonicalFullName(user);
                   return (
-                  <div key={user.doc_id || user.uid} className="p-3 hover:bg-slate-50 flex items-center justify-between transition-colors">
+                  <div key={user.doc_id || user.uid ? `${user.doc_id || user.uid}_${idx}` : `u_${idx}`} className="p-3 hover:bg-slate-50 flex items-center justify-between transition-colors">
                     <div>
                       <p className="font-bold text-xs text-slate-900">
                         {canonical.displayName}

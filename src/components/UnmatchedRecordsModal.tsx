@@ -93,9 +93,9 @@ export const UnmatchedRecordsModal: React.FC<UnmatchedRecordsModalProps> = ({
                     {entry.possibleMatches && entry.possibleMatches.length > 0 && (
                         <div className="text-[10px] uppercase font-bold text-slate-500">Suggested Matches</div>
                     )}
-                    {entry.possibleMatches?.map((match: any) => (
+                    {entry.possibleMatches?.map((match: any, idx: number) => (
                       <button 
-                        key={match.doc_id}
+                        key={match.doc_id ? `${match.doc_id}_${idx}` : `match_${idx}`}
                         onClick={() => onManualSync(i, entry, match.doc_id)}
                         className="text-left text-xs p-2 rounded bg-blue-50 text-blue-800 border border-blue-100 hover:bg-blue-100"
                       >
@@ -109,8 +109,8 @@ export const UnmatchedRecordsModal: React.FC<UnmatchedRecordsModalProps> = ({
                       onChange={(e) => setManualSyncTargets(prev => ({ ...prev, [i]: e.target.value }))}
                     >
                       <option value="">-- Select from database --</option>
-                      {missingUsersForSelectedScore.map(u => (
-                        <option key={u.doc_id} value={u.doc_id}>
+                      {missingUsersForSelectedScore.map((u, idx) => (
+                        <option key={u.doc_id ? `${u.doc_id}_${idx}` : `opt_${idx}`} value={u.doc_id}>
                           {u.last_name}, {u.first_name} ({u.seq_id || 'N/A'})
                         </option>
                       ))}

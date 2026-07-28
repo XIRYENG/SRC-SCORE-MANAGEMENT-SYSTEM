@@ -84,7 +84,7 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
     if (value !== undefined && value !== null && String(value).trim() !== '') {
       return `${selectedCategory.toUpperCase()} ${selectedSubject}: ${value}`;
     }
-    return `${selectedCategory.toUpperCase()} ${selectedSubject}: N/A`;
+    return `${selectedCategory.toUpperCase()} ${selectedSubject}: 0.00%`;
   };
 
   const filteredUnmatchedEntries = useMemo(() => {
@@ -226,9 +226,9 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
                           Suggested Matches
                         </p>
 
-                        {e.possibleMatches.map((m: any) => (
+                        {e.possibleMatches.map((m: any, mIdx: number) => (
                           <button
-                            key={m.doc_id}
+                            key={m.doc_id ? `${m.doc_id}_${mIdx}` : `m_${mIdx}`}
                             onClick={() =>
                               setManualSyncTargets?.(prev => ({
                                 ...prev,

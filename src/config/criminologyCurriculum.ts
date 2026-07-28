@@ -32,6 +32,8 @@ export const CRIMINOLOGY_SUBJECTS: CurriculumSubject[] = [
   { id: "lea_2", areaCode: "LEA", subjectCode: "LEA 2", subjectName: "Comparative Models in Policing", sortOrder: 2 },
   { id: "lea_3", areaCode: "LEA", subjectCode: "LEA 3", subjectName: "Introduction to Industrial Security Concepts", sortOrder: 3 },
   { id: "lea_4", areaCode: "LEA", subjectCode: "LEA 4", subjectName: "Law Enforcement Operation and Planning with Crime Mapping", sortOrder: 4 },
+  { id: "clfm_1", areaCode: "LEA", subjectCode: "CLFM 1", subjectName: "Character Formation, Nationalism, and Patriotism", sortOrder: 5 },
+  { id: "clfm_2", areaCode: "LEA", subjectCode: "CLFM 2", subjectName: "Leadership, Decision Making, Management, and Administration", sortOrder: 6 },
 
   // FS
   { id: "fs_1", areaCode: "FS", subjectCode: "FS 1", subjectName: "Forensic Photography", sortOrder: 1 },

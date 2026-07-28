@@ -51,7 +51,7 @@ import { calculateAreaDashboardData, calculateRevieweeArea } from '../utils/calc
 import { getResolvedScore } from '../utils/scoreFieldResolver';
 import { GradeCalculationSettings } from './GradeCalculationSettings';
 import { AreaPerformanceCard } from './performance/AreaPerformanceCard';
-import { AreaPerformanceCircle } from './AreaPerformanceCircle';
+import { BoardSubjectAreasSection } from './BoardSubjectAreasSection';
 import { AreaPerformanceModal } from './performance/AreaPerformanceModal';
 import { AdminSummaryCard } from './admin/AdminSummaryCard';
 import { AdminPageHeader } from './admin/AdminPageHeader';
@@ -493,29 +493,17 @@ export function AdminPortal({ data, onLogout, onOpenSyncModal, syncProps }: Admi
           />
         </div>
 
-        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="mb-5 flex items-center justify-between">
-            <h3 className="text-lg font-black text-slate-900">Performance by Area</h3>
-            <button onClick={() => handleTabSelect('leaderboard')} className="text-xs font-black text-[#007C89] hover:text-teal-800 transition-colors">
-              View All Areas
-            </button>
-          </div>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {areaScores.length === 0 ? (
-              <p className="py-6 text-xs font-medium text-slate-500">No scores encoded yet.</p>
-            ) : (
-              areaScores.map((item) => (
-                <AreaPerformanceCircle 
-                  key={item.area} 
-                  subject={item.area} 
-                  percentage={item.percent} 
-                  revieweeCount={item.count} 
-                  onClick={() => handleAreaCardClick(item.area, item.key as SubjectArea)}
-                />
-              ))
-            )}
-          </div>
-        </section>
+        <BoardSubjectAreasSection
+          areas={areaScores.map((item) => ({
+            key: item.area,
+            area: item.area,
+            title: item.title,
+            percent: item.percent,
+            count: item.count,
+            onClick: () => handleAreaCardClick(item.area, item.key as SubjectArea),
+          }))}
+          onViewAll={() => handleTabSelect('leaderboard')}
+        />
 
         {/* Score Trend + Recent Activity */}
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-5">
@@ -558,7 +546,7 @@ export function AdminPortal({ data, onLogout, onOpenSyncModal, syncProps }: Admi
               {
                 key: 'avg',
                 header: 'Overall Score',
-                render: (r) => (r.avg == null ? <span className="text-slate-400">—</span> : <span className="font-black text-slate-900">{r.avg.toFixed(1)}%</span>),
+                render: (r) => <span className="font-black text-slate-900">{r.avg != null ? `${r.avg.toFixed(2)}%` : '0.00%'}</span>,
               },
               {
                 key: 'status',

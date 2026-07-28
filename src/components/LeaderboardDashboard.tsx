@@ -116,7 +116,7 @@ export const LeaderboardDashboard: React.FC<LeaderboardDashboardProps> = ({ user
                 </div>
 
                 <div className="bg-white/20 backdrop-blur-sm rounded-2xl px-4 py-2 border border-white/20">
-                   <span className="text-2xl font-black">{user.displayScore}%</span>
+                   <span className="text-2xl font-black">{user.displayScore.toFixed(2)}%</span>
                 </div>
               </div>
             </div>
@@ -267,11 +267,11 @@ export const LeaderboardDashboard: React.FC<LeaderboardDashboardProps> = ({ user
                       <td className="px-6 py-5 text-center">
                         <div className="inline-flex flex-col items-center">
                           <span className={`text-xl font-black tracking-tighter ${
-                            user.displayScore >= 75 ? 'text-emerald-600' : 
-                            user.displayScore >= 50 ? 'text-blue-600' : 
+                            (user.displayScore ?? 0) >= 75 ? 'text-emerald-600' : 
+                            (user.displayScore ?? 0) >= 50 ? 'text-blue-600' : 
                             'text-slate-400'
                           }`}>
-                            {user.displayScore !== null ? `${user.displayScore}%` : '--'}
+                            {user.displayScore !== null ? `${user.displayScore.toFixed(2)}%` : '0.00%'}
                           </span>
                           {user.displayScore !== null && (
                             <div className="w-12 h-1 bg-slate-100 dark:bg-slate-800 rounded-full mt-1 overflow-hidden">

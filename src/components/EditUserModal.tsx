@@ -3,6 +3,7 @@ import { X, Save, AlertTriangle, ChevronDown } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 import { AnimatedSelect } from './ui/animated-select';
+import { cleanOptionalName, formatFormalName } from '../services/userIdentityResolver';
 
 interface EditUserModalProps {
   user: any;
@@ -15,7 +16,7 @@ interface EditUserModalProps {
 export const EditUserModal: React.FC<EditUserModalProps> = ({ user, isOpen, onClose, onSave, currentUserRole }) => {
   const [formData, setFormData] = useState({
     firstName: user.firstName || user.first_name || '',
-    middleName: user.middleName || user.middle_name || '',
+    middleName: cleanOptionalName(user.middleName || user.middle_name || ''),
     lastName: user.lastName || user.last_name || '',
     email: user.email || '',
     role: user.role || user.role_name || 'Reviewee',
@@ -43,7 +44,14 @@ export const EditUserModal: React.FC<EditUserModalProps> = ({ user, isOpen, onCl
   const handleConfirm = async () => {
     setIsSaving(true);
     try {
-      await onSave({ ...user, ...formData });
+      const cleanedMiddle = cleanOptionalName(formData.middleName);
+      await onSave({
+        ...user,
+        ...formData,
+        middleName: cleanedMiddle,
+        middle_name: cleanedMiddle,
+        middle_initial: cleanedMiddle ? `${cleanedMiddle.charAt(0).toUpperCase()}.` : '',
+      });
       setIsConfirming(false);
       onClose();
     } catch (error) {
@@ -53,13 +61,19 @@ export const EditUserModal: React.FC<EditUserModalProps> = ({ user, isOpen, onCl
     }
   };
 
+  const formattedName = formatFormalName({
+    firstName: formData.firstName,
+    middleName: formData.middleName,
+    lastName: formData.lastName,
+  });
+
   return (
     <div className="fixed inset-0 z-[1100] flex items-center justify-center bg-black/50 p-4">
       {isConfirming ? (
         <div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-xl text-center">
             <AlertTriangle className="mx-auto text-amber-500 mb-4" size={48} />
             <h2 className="text-lg font-extrabold text-slate-900 mb-2">Confirm Changes</h2>
-            <p className="text-sm text-slate-600 mb-6">Are you sure you want to save these changes for {formData.firstName} {formData.middleName ? formData.middleName + ' ' : ''}{formData.lastName}?</p>
+            <p className="text-sm text-slate-600 mb-6">Are you sure you want to save these changes for {formattedName}?</p>
             <div className="flex gap-3">
                 <button type="button" disabled={isSaving} onClick={() => setIsConfirming(false)} className="flex-1 bg-slate-100 text-slate-700 font-bold py-2.5 rounded-xl hover:bg-slate-200 disabled:opacity-50">Cancel</button>
                 <button type="button" disabled={isSaving} onClick={handleConfirm} className="flex-1 bg-teal-600 text-white font-bold py-2.5 rounded-xl hover:bg-teal-700 disabled:opacity-50">{isSaving ? 'Saving...' : 'Confirm'}</button>

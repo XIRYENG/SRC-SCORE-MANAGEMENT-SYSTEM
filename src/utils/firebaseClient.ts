@@ -20,6 +20,7 @@ import {
   type Firestore,
 } from "firebase/firestore";
 import { app, firebaseConfigured, getFirebaseConfig } from "./firebase";
+import { cleanOptionalName } from "../services/userIdentityResolver";
 
 let dbInstance: Firestore;
 
@@ -118,7 +119,7 @@ export async function clientCheckDuplicate(
   
   const uLastName = String(lastName || '').trim().toUpperCase();
   const uFirstName = String(firstName || '').trim().toUpperCase();
-  const uMiddleName = String(middleName || '').trim().toUpperCase();
+  const uMiddleName = String(cleanOptionalName(middleName)).trim().toUpperCase();
 
   const q = query(
     collection(firestoreDb, "users"),
@@ -128,8 +129,8 @@ export async function clientCheckDuplicate(
   const querySnapshot = await withTimeout(getDocs(q));
   const matchDoc = querySnapshot.docs.find(docSnap => {
     const d = docSnap.data();
-    const storedFirst = String(d.first_name || '').trim().toUpperCase();
-    const storedMiddle = String(d.middle_name || '').trim().toUpperCase();
+    const storedFirst = String(d.first_name || d.firstName || '').trim().toUpperCase();
+    const storedMiddle = String(cleanOptionalName(d.middle_name || d.middleName || '')).trim().toUpperCase();
     return storedFirst === uFirstName && storedMiddle === uMiddleName;
   });
   
@@ -140,7 +141,7 @@ export async function clientCheckDuplicate(
       seqId: existing.seq_id,
       last_name: existing.last_name,
       first_name: existing.first_name,
-      middle_name: existing.middle_name,
+      middle_name: cleanOptionalName(existing.middle_name),
       school_name: existing.school_name,
       timestamp: existing.created_at,
       pin: existing.pin
@@ -163,7 +164,7 @@ export async function clientVerifyPin(
   
   const uLastName = String(lastName || '').trim().toUpperCase();
   const uFirstName = String(firstName || '').trim().toUpperCase();
-  const uMiddleName = String(middleName || '').trim().toUpperCase();
+  const uMiddleName = String(cleanOptionalName(middleName)).trim().toUpperCase();
   const uPin = String(pin || '').trim();
 
   const q = query(
@@ -174,8 +175,8 @@ export async function clientVerifyPin(
   const querySnapshot = await withTimeout(getDocs(q));
   const matchDoc = querySnapshot.docs.find(docSnap => {
     const d = docSnap.data();
-    const storedFirst = String(d.first_name || '').trim().toUpperCase();
-    const storedMiddle = String(d.middle_name || '').trim().toUpperCase();
+    const storedFirst = String(d.first_name || d.firstName || '').trim().toUpperCase();
+    const storedMiddle = String(cleanOptionalName(d.middle_name || d.middleName || '')).trim().toUpperCase();
     return storedFirst === uFirstName && storedMiddle === uMiddleName;
   });
   
@@ -187,7 +188,7 @@ export async function clientVerifyPin(
         seqId: existing.seq_id,
         last_name: existing.last_name,
         first_name: existing.first_name,
-        middle_name: existing.middle_name,
+        middle_name: cleanOptionalName(existing.middle_name),
         school_name: existing.school_name,
         timestamp: existing.created_at,
         pin: existing.pin,
@@ -228,7 +229,7 @@ export async function clientEnroll(
 
   const uLastName = String(lastName || '').trim().toUpperCase();
   const uFirstName = String(firstName || '').trim().toUpperCase();
-  const uMiddleName = String(middleName || '').trim().toUpperCase();
+  const uMiddleName = String(cleanOptionalName(middleName)).trim().toUpperCase();
   let uSchoolName = String(schoolName || '').trim().toUpperCase();
   const uPin = String(pin || '').trim();
 
@@ -253,8 +254,8 @@ export async function clientEnroll(
   const querySnapshot = await withTimeout(getDocs(q));
   const matchDoc = querySnapshot.docs.find(docSnap => {
     const d = docSnap.data();
-    const storedFirst = String(d.first_name || '').trim().toUpperCase();
-    const storedMiddle = String(d.middle_name || '').trim().toUpperCase();
+    const storedFirst = String(d.first_name || d.firstName || '').trim().toUpperCase();
+    const storedMiddle = String(cleanOptionalName(d.middle_name || d.middleName || '')).trim().toUpperCase();
     return storedFirst === uFirstName && storedMiddle === uMiddleName;
   });
 
