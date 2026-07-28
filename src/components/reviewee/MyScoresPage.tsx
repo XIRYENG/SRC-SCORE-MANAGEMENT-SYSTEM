@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
-import { RevieweeData } from '../../types';
+import { RevieweeData, ScoreFolder } from '../../types';
+import { useScoreFolders } from '../../hooks/useScoreFolders';
 import { MyScoresBoardSubjectAreas } from './MyScoresBoardSubjectAreas';
 import { DailyEvaluationSubjectTable, RevieweeDateCol } from './DailyEvaluationSubjectTable';
 import { calculateAggregatedAreaRating } from '../../lib/scoreCalculations';
@@ -8,15 +9,24 @@ import { ScoreRecord } from '../../utils/scoreParser';
 import { getSubjectsByArea, MajorAreaCode, MAJOR_AREAS } from '../../config/criminologyCurriculum';
 
 export function MyScoresPage({ revieweeData, scores }: { revieweeData: RevieweeData; scores: ScoreRecord[] }) {
+  const { folders } = useScoreFolders();
+  const publishedFolders = useMemo(() => folders.filter(f => f.publicationStatus === 'published' && !f.isArchived), [folders]);
+  const [selectedFolder, setSelectedFolder] = useState<ScoreFolder | null>(publishedFolders[0] || null);
   const [selectedArea, setSelectedArea] = useState<string>('CLJ');
   const [selectedCategory, setSelectedCategory] = useState<string>('Daily Evaluation');
 
+  // Filter scores based on the selected folder
+  const filteredScores = useMemo(() => {
+    if (!selectedFolder) return [];
+    return scores.filter(s => (s as any).scoreFolderId === selectedFolder.id);
+  }, [scores, selectedFolder]);
+
   const categories = useMemo(() => {
-    const rawCategories = Array.from(new Set(scores.map(r => r.category || 'Evaluation')));
+    const rawCategories = Array.from(new Set(filteredScores.map(r => r.category || 'Evaluation')));
     const defaults = ['Daily Evaluation', 'Diagnostic', 'Pretest', 'Posttest', 'Quiz', 'Removal', 'Preboard'];
     const merged = Array.from(new Set([...defaults, ...rawCategories]));
     return merged;
-  }, [scores]);
+  }, [filteredScores]);
 
   const isDailyEvaluation = normalizeScoreCategory(selectedCategory) === 'dailyevaluation';
 
@@ -25,7 +35,7 @@ export function MyScoresPage({ revieweeData, scores }: { revieweeData: RevieweeD
     if (!isDailyEvaluation) return null;
 
     const normArea = (selectedArea || 'CLJ').toUpperCase() as MajorAreaCode;
-    const catRecords = scores.filter(r => normalizeScoreCategory(r.category || '') === 'dailyevaluation');
+    const catRecords = filteredScores.filter(r => normalizeScoreCategory(r.category || '') === 'dailyevaluation');
 
     // Also look at revieweeData.assessmentRecords & scoresByDate
     const assessmentRecords = Object.values(revieweeData?.assessmentRecords || {});
@@ -134,7 +144,7 @@ export function MyScoresPage({ revieweeData, scores }: { revieweeData: RevieweeD
 
     const subjects = MAJOR_AREAS.map(a => ({ key: a.code, label: a.code, title: a.title }));
     const categoryKey = normalizeScoreCategory(selectedCategory);
-    const categoryRecords = scores.filter(r => normalizeScoreCategory(r.category || 'Evaluation') === categoryKey);
+    const categoryRecords = filteredScores.filter(r => normalizeScoreCategory(r.category || 'Evaluation') === categoryKey);
 
     const uniqueDates = Array.from(new Set(categoryRecords.map(r => r.date || 'Unknown Date'))).sort();
 
@@ -202,7 +212,7 @@ export function MyScoresPage({ revieweeData, scores }: { revieweeData: RevieweeD
     return MAJOR_AREAS.map((ma) => {
       const subjKey = normalizeScoreSubject(ma.code);
       const catKey = normalizeScoreCategory(selectedCategory);
-      const matchingRecords = scores.filter(
+      const matchingRecords = filteredScores.filter(
         r => normalizeScoreSubject(r.area || '') === subjKey && normalizeScoreCategory(r.category || '') === catKey
       );
 
@@ -228,133 +238,173 @@ export function MyScoresPage({ revieweeData, scores }: { revieweeData: RevieweeD
         <p className="text-sm text-slate-600">
           View your scores by board subject area, examination category, and evaluation dates.
         </p>
-      </div>
-
-      {/* Board Subject Areas Selection */}
-      <MyScoresBoardSubjectAreas
-        areas={boardSubjectAreaScores}
-        selectedArea={selectedArea}
-        onAreaClick={(area) => setSelectedArea(area)}
-      />
-
-      <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden">
-        {/* Category Toolbar */}
-        <div className="p-6 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="flex gap-2 overflow-x-auto pb-2 sm:pb-0">
-            {categories.map(cat => (
-              <button
-                key={cat}
-                type="button"
-                onClick={() => setSelectedCategory(cat)}
-                className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-colors cursor-pointer ${
-                  selectedCategory === cat
-                    ? 'bg-teal-600 text-white shadow-sm'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}
-              >
-                {cat}
-              </button>
-            ))}
-          </div>
-
-          <div className="text-xs font-bold text-slate-500">
-            Selected Major Area: <span className="text-teal-700 font-black">{selectedArea}</span>
-          </div>
-        </div>
-
-        {/* Table Content */}
-        <div className="p-6">
-          {isDailyEvaluation && dailyEvalData ? (
-            <DailyEvaluationSubjectTable
-              areaCode={selectedArea as MajorAreaCode}
-              dates={dailyEvalData.dateCols}
-              scoresBySubjectAndDate={dailyEvalData.scoresBySubjectAndDate}
-            />
-          ) : standardCategoryData ? (
-            <div className="overflow-x-auto rounded-2xl border border-slate-200 shadow-sm">
-              <table className="w-full text-xs text-left text-slate-600">
-                <thead className="text-[10px] text-slate-300 uppercase font-black bg-slate-900 border-b border-slate-800">
-                  <tr>
-                    <th rowSpan={2} className="px-4 py-3 sticky left-0 bg-slate-900 z-20 shadow-[1px_0_0_0_rgba(255,255,255,0.1)]">
-                      Area
-                    </th>
-                    <th colSpan={Math.max(1, standardCategoryData.dates.length)} className="px-4 py-3 text-center border-b border-slate-800">
-                      {selectedCategory}
-                    </th>
-                    <th rowSpan={2} className="px-4 py-3 text-center bg-slate-800 shadow-[-1px_0_0_0_rgba(255,255,255,0.1)]">
-                      Combined
-                    </th>
-                    <th rowSpan={2} className="px-4 py-3 text-center bg-slate-800 shadow-[-1px_0_0_0_rgba(255,255,255,0.1)]">
-                      Rating
-                    </th>
-                  </tr>
-                  <tr>
-                    {standardCategoryData.dates.length > 0 ? (
-                      standardCategoryData.dates.map((d) => (
-                        <th key={d.id} className="px-4 py-2 border-r border-slate-800 whitespace-nowrap text-center bg-slate-800/50">
-                          {d.label}
-                        </th>
-                      ))
-                    ) : (
-                      <th className="px-4 py-2 border-r border-slate-800 whitespace-nowrap text-center bg-slate-800/50">
-                        No Dates Available
-                      </th>
-                    )}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 bg-white">
-                  {standardCategoryData.tableRows.map((row) => {
-                    const isSelected = selectedArea === row.area;
-                    return (
-                      <tr
-                        key={row.area}
-                        onClick={() => setSelectedArea(row.area)}
-                        className={`cursor-pointer transition-colors ${
-                          isSelected ? 'bg-teal-50/50 hover:bg-teal-50/80' : 'hover:bg-slate-50'
-                        }`}
-                      >
-                        <td
-                          className={`px-4 py-3 font-black sticky left-0 z-10 border-r border-slate-100 ${
-                            isSelected ? 'bg-teal-50 text-teal-900' : 'bg-white text-slate-900'
-                          }`}
-                        >
-                          {row.area}
-                        </td>
-                        {standardCategoryData.dates.length > 0 ? (
-                          standardCategoryData.dates.map((date) => {
-                            const cell = row.cellsByDateId[date.id];
-                            return (
-                              <td key={date.id} className="px-4 py-3 border-r border-slate-100 text-center font-medium">
-                                {cell ? `${cell.earned}/${cell.total}` : <span className="text-slate-300">—</span>}
-                              </td>
-                            );
-                          })
-                        ) : (
-                          <td className="px-4 py-3 border-r border-slate-100 text-center text-slate-300">—</td>
-                        )}
-                        <td
-                          className={`px-4 py-3 font-bold text-center border-l border-slate-100 ${
-                            isSelected ? 'bg-teal-50/30' : 'bg-slate-50'
-                          }`}
-                        >
-                          {row.aggregate.totalEarned}/{row.aggregate.totalPossible}
-                        </td>
-                        <td
-                          className={`px-4 py-3 font-black text-center ${
-                            isSelected ? 'bg-teal-50/50 text-teal-700' : 'bg-slate-50 text-teal-600'
-                          }`}
-                        >
-                          {row.aggregate.rating !== null ? `${row.aggregate.rating.toFixed(2)}%` : '0.00%'}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+        {selectedFolder && (
+          <div className="mt-4">
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Currently Viewing:</span>
+            <div className="text-sm font-black text-teal-700 bg-teal-50 px-3 py-1 rounded-full inline-block ml-2 border border-teal-100">
+              {selectedFolder.name}
             </div>
-          ) : null}
-        </div>
+          </div>
+        )}
       </div>
+
+      {/* Published Folder Selector */}
+      <div className="flex gap-2 overflow-x-auto pb-2">
+        {publishedFolders.map(folder => (
+          <button
+            key={folder.id}
+            onClick={() => setSelectedFolder(folder)}
+            className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-colors cursor-pointer ${
+              selectedFolder?.id === folder.id
+                ? 'bg-slate-900 text-white shadow-md'
+                : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+            }`}
+          >
+            {folder.name}
+          </button>
+        ))}
+      </div>
+
+      <motion.div
+        key={selectedFolder?.id || 'none'}
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: -10 }}
+        transition={{ duration: 0.3 }}
+      >
+        {/* Privacy Notice */}
+        <div className="bg-slate-100 rounded-2xl p-4 text-center mt-4">
+          <p className="text-xs font-semibold text-slate-500">
+            “Only your Published scores from active score folders are visible to you.”
+          </p>
+        </div>
+
+        {/* Board Subject Areas Selection */}
+        <MyScoresBoardSubjectAreas
+          areas={boardSubjectAreaScores}
+          selectedArea={selectedArea}
+          onAreaClick={(area) => setSelectedArea(area)}
+        />
+
+        <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden">
+          {/* Category Toolbar */}
+          <div className="p-6 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex gap-2 overflow-x-auto pb-2 sm:pb-0">
+              {categories.map(cat => (
+                <button
+                  key={cat}
+                  type="button"
+                  onClick={() => setSelectedCategory(cat)}
+                  className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-colors cursor-pointer ${
+                    selectedCategory === cat
+                      ? 'bg-teal-600 text-white shadow-sm'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  {cat}
+                </button>
+              ))}
+            </div>
+
+            <div className="text-xs font-bold text-slate-500">
+              Selected Major Area: <span className="text-teal-700 font-black">{selectedArea}</span>
+            </div>
+          </div>
+
+          {/* Table Content */}
+          <div className="p-6">
+            {isDailyEvaluation && dailyEvalData ? (
+              <DailyEvaluationSubjectTable
+                areaCode={selectedArea as MajorAreaCode}
+                dates={dailyEvalData.dateCols}
+                scoresBySubjectAndDate={dailyEvalData.scoresBySubjectAndDate}
+              />
+            ) : standardCategoryData ? (
+              <div className="overflow-x-auto rounded-2xl border border-slate-200 shadow-sm">
+                <table className="w-full text-xs text-left text-slate-600">
+                  <thead className="text-[10px] text-slate-300 uppercase font-black bg-slate-900 border-b border-slate-800">
+                    <tr>
+                      <th rowSpan={2} className="px-4 py-3 sticky left-0 bg-slate-900 z-20 shadow-[1px_0_0_0_rgba(255,255,255,0.1)]">
+                        Area
+                      </th>
+                      <th colSpan={Math.max(1, standardCategoryData.dates.length)} className="px-4 py-3 text-center border-b border-slate-800">
+                        {selectedCategory}
+                      </th>
+                      <th rowSpan={2} className="px-4 py-3 text-center bg-slate-800 shadow-[-1px_0_0_0_rgba(255,255,255,0.1)]">
+                        Combined
+                      </th>
+                      <th rowSpan={2} className="px-4 py-3 text-center bg-slate-800 shadow-[-1px_0_0_0_rgba(255,255,255,0.1)]">
+                        Rating
+                      </th>
+                    </tr>
+                    <tr>
+                      {standardCategoryData.dates.length > 0 ? (
+                        standardCategoryData.dates.map((d) => (
+                          <th key={d.id} className="px-4 py-2 border-r border-slate-800 whitespace-nowrap text-center bg-slate-800/50">
+                            {d.label}
+                          </th>
+                        ))
+                      ) : (
+                        <th className="px-4 py-2 border-r border-slate-800 whitespace-nowrap text-center bg-slate-800/50">
+                          No Dates Available
+                        </th>
+                      )}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 bg-white">
+                    {standardCategoryData.tableRows.map((row) => {
+                      const isSelected = selectedArea === row.area;
+                      return (
+                        <tr
+                          key={row.area}
+                          onClick={() => setSelectedArea(row.area)}
+                          className={`cursor-pointer transition-colors ${
+                            isSelected ? 'bg-teal-50/50 hover:bg-teal-50/80' : 'hover:bg-slate-50'
+                          }`}
+                        >
+                          <td
+                            className={`px-4 py-3 font-black sticky left-0 z-10 border-r border-slate-100 ${
+                              isSelected ? 'bg-teal-50 text-teal-900' : 'bg-white text-slate-900'
+                            }`}
+                          >
+                            {row.area}
+                          </td>
+                          {standardCategoryData.dates.length > 0 ? (
+                            standardCategoryData.dates.map((date) => {
+                              const cell = row.cellsByDateId[date.id];
+                              return (
+                                <td key={date.id} className="px-4 py-3 border-r border-slate-100 text-center font-medium">
+                                  {cell ? `${cell.earned}/${cell.total}` : <span className="text-slate-300">—</span>}
+                                </td>
+                              );
+                            })
+                          ) : (
+                            <td className="px-4 py-3 border-r border-slate-100 text-center text-slate-300">—</td>
+                          )}
+                          <td
+                            className={`px-4 py-3 font-bold text-center border-l border-slate-100 ${
+                              isSelected ? 'bg-teal-50/30' : 'bg-slate-50'
+                            }`}
+                          >
+                            {row.aggregate.totalEarned}/{row.aggregate.totalPossible}
+                          </td>
+                          <td
+                            className={`px-4 py-3 font-black text-center ${
+                              isSelected ? 'bg-teal-50/50 text-teal-700' : 'bg-slate-50 text-teal-600'
+                            }`}
+                          >
+                            {row.aggregate.rating !== null ? `${row.aggregate.rating.toFixed(2)}%` : '0.00%'}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </motion.div>
     </div>
   );
 }
