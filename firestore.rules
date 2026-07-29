@@ -105,7 +105,8 @@ service cloud.firestore {
         resource.data.isArchived != true &&
         isUserInFolderScope(resource.data)
       );
-      allow create, update, delete: if isAdminLike();
+      allow create, update: if isAdminLike();
+      allow delete: if isAdmin();
     }
 
     // Default

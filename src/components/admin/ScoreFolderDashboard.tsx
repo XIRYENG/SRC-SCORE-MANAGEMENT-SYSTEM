@@ -1,15 +1,16 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Folder, FolderPlus, MoreVertical, Edit, Archive, Eye, EyeOff, Calendar, Users, AlertTriangle, Building2, GitBranch } from 'lucide-react';
+import { Folder, FolderPlus, MoreVertical, Edit, Archive, Trash2, Eye, EyeOff, Calendar, Users, AlertTriangle, Building2, GitBranch } from 'lucide-react';
 import { AnimatedDatePicker } from '../ui/animated-date-picker';
 import { AnimatedSelect } from '../ui/animated-select';
 import { ScoreFolder, ScoreFolderType, RevieweeData } from '../../types';
 import { useScoreFolders } from '../../hooks/useScoreFolders';
 import { firestoreDb } from '../../utils/firebaseClient';
-import { doc, setDoc, updateDoc, serverTimestamp, collection, getDocs, query, onSnapshot } from 'firebase/firestore';
+import { doc, setDoc, updateDoc, deleteDoc, serverTimestamp, collection, getDocs, query, onSnapshot, where, getCountFromServer } from 'firebase/firestore';
 import { SearchableMultiSelect } from '../searchable-multi-select';
 import { formatFolderScopeDisplay } from '../../utils/folderScope';
 import { FolderScopeConfig } from './FolderScopeConfig';
+import { ConfirmActionModal } from '../ConfirmActionModal';
 
 const DEFAULT_SCHOOL_OPTIONS = [
   { id: 'CKCM', name: 'CKCM (Christ the King College de Maranding)' },
@@ -47,8 +48,63 @@ export function ScoreFolderDashboard({
   const { folders, loading } = useScoreFolders();
   const [isCreating, setIsCreating] = useState(false);
   const [editingFolder, setEditingFolder] = useState<ScoreFolder | null>(null);
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean;
+    folder: ScoreFolder | null;
+    action: 'delete' | 'archive' | null;
+    recordCount: number | null;
+    isLoading: boolean;
+  }>({ isOpen: false, folder: null, action: null, recordCount: null, isLoading: false });
 
-  const activeFolders = folders.filter(f => !f.isArchived);
+  const activeFolders = folders.filter(f => !f.isArchived && !f.isDeleted);
+  
+  const handleArchive = async () => {
+    if (!confirmModal.folder || !currentUser) return;
+    setConfirmModal(prev => ({ ...prev, isLoading: true }));
+    try {
+      await updateDoc(doc(firestoreDb, 'scoreFolders', confirmModal.folder.id), {
+        isArchived: true,
+        archivedAt: serverTimestamp(),
+        archivedBy: currentUser.uid,
+        updatedAt: serverTimestamp(),
+        updatedBy: currentUser.uid
+      });
+      setConfirmModal({ isOpen: false, folder: null, action: null, recordCount: null, isLoading: false });
+    } catch (err) {
+      console.error("Error archiving folder:", err);
+      setConfirmModal(prev => ({ ...prev, isLoading: false }));
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!confirmModal.folder || !currentUser) return;
+    setConfirmModal(prev => ({ ...prev, isLoading: true }));
+    try {
+      await updateDoc(doc(firestoreDb, 'scoreFolders', confirmModal.folder.id), {
+        isDeleted: true,
+        deletedAt: serverTimestamp(),
+        deletedBy: currentUser.uid,
+        updatedAt: serverTimestamp(),
+        updatedBy: currentUser.uid
+      });
+      setConfirmModal({ isOpen: false, folder: null, action: null, recordCount: null, isLoading: false });
+    } catch (err) {
+      console.error("Error deleting folder:", err);
+      setConfirmModal(prev => ({ ...prev, isLoading: false }));
+    }
+  };
+
+  const openConfirmModal = async (folder: ScoreFolder, action: 'delete' | 'archive') => {
+    setConfirmModal({ isOpen: true, folder, action, recordCount: null, isLoading: true });
+    try {
+      const q = query(collection(firestoreDb, 'scoreRecords'), where('folderId', '==', folder.id));
+      const snapshot = await getCountFromServer(q);
+      setConfirmModal(prev => ({ ...prev, recordCount: snapshot.data().count, isLoading: false }));
+    } catch (err) {
+      console.error("Error counting records:", err);
+      setConfirmModal(prev => ({ ...prev, isLoading: false, recordCount: 0 }));
+    }
+  };
   
   if (loading) {
     return (
@@ -101,10 +157,33 @@ export function ScoreFolderDashboard({
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {activeFolders.map(folder => (
-            <FolderCard key={folder.id} folder={folder} onOpen={() => onOpenFolder(folder)} currentUser={currentUser} onEdit={setEditingFolder} />
+            <FolderCard 
+              key={folder.id} 
+              folder={folder} 
+              onOpen={() => onOpenFolder(folder)} 
+              currentUser={currentUser} 
+              onEdit={setEditingFolder} 
+              onArchive={() => openConfirmModal(folder, 'archive')}
+              onDelete={() => openConfirmModal(folder, 'delete')}
+            />
           ))}
         </div>
       </div>
+
+      <ConfirmActionModal 
+        isOpen={confirmModal.isOpen}
+        title={confirmModal.action === 'delete' ? 'Delete Score Folder' : 'Archive Score Folder'}
+        subtitle={confirmModal.action === 'delete' ? 'Permanent Deletion' : 'Folder Archiving'}
+        message={
+          confirmModal.action === 'delete' 
+            ? `This action cannot be undone. You are about to permanently delete "${confirmModal.folder?.name}". This folder contains ${confirmModal.recordCount} records.`
+            : `You are about to archive "${confirmModal.folder?.name}". This folder contains ${confirmModal.recordCount} records, which will be hidden from reviewees.`
+        }
+        confirmWord={confirmModal.action === 'delete' ? 'DELETE' : 'ARCHIVE'}
+        isLoading={confirmModal.isLoading}
+        onConfirm={confirmModal.action === 'delete' ? handleDelete : handleArchive}
+        onClose={() => setConfirmModal(prev => ({ ...prev, isOpen: false, folder: null, action: null }))}
+      />
 
       <AnimatePresence>
         {(isCreating || editingFolder) && (
@@ -119,9 +198,18 @@ export function ScoreFolderDashboard({
   );
 }
 
-function FolderCard({ folder, onOpen, currentUser, onEdit }: { folder: ScoreFolder; onOpen: () => void; currentUser: any; onEdit: (folder: ScoreFolder) => void }) {
+function FolderCard({ folder, onOpen, currentUser, onEdit, onArchive, onDelete }: { 
+  folder: ScoreFolder; 
+  onOpen: () => void; 
+  currentUser: any; 
+  onEdit: (folder: ScoreFolder) => void;
+  onArchive: () => void;
+  onDelete: () => void;
+}) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const scopeDisplay = formatFolderScopeDisplay(folder);
+
+  const isAdmin = currentUser?.role === 'Admin';
 
   const togglePublish = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -133,23 +221,6 @@ function FolderCard({ folder, onOpen, currentUser, onEdit }: { folder: ScoreFold
       });
     } catch (err) {
       console.error("Error toggling publish:", err);
-    }
-  };
-
-  const archiveFolder = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (confirm("Archive this folder? This will hide it from reviewees but keep data intact.")) {
-      try {
-        await updateDoc(doc(firestoreDb, 'scoreFolders', folder.id), {
-          isArchived: true,
-          archivedAt: serverTimestamp(),
-          archivedBy: currentUser?.uid || 'unknown',
-          updatedAt: serverTimestamp(),
-          updatedBy: currentUser?.uid || 'unknown'
-        });
-      } catch (err) {
-        console.error("Error archiving folder:", err);
-      }
     }
   };
 
@@ -200,11 +271,19 @@ function FolderCard({ folder, onOpen, currentUser, onEdit }: { folder: ScoreFold
                     {folder.publicationStatus === 'published' ? <><EyeOff size={16} className="text-slate-500" /> Hide</> : <><Eye size={16} className="text-slate-500" /> Publish</>}
                   </button>
                   <button 
-                    onClick={(e) => { setIsMenuOpen(false); archiveFolder(e); }}
+                    onClick={(e) => { e.stopPropagation(); setIsMenuOpen(false); onArchive(); }}
                     className="w-full flex items-center gap-2 px-3 py-2 text-sm text-rose-600 hover:bg-rose-50 font-medium transition-colors border-t border-slate-100"
                   >
                     <Archive size={16} className="text-rose-500" /> Archive
                   </button>
+                  {isAdmin && (
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); setIsMenuOpen(false); onDelete(); }}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-rose-600 hover:bg-rose-50 font-medium transition-colors border-t border-slate-100"
+                    >
+                      <Trash2 size={16} className="text-rose-500" /> Delete
+                    </button>
+                  )}
                 </motion.div>
               </>
             )}

@@ -11,6 +11,7 @@ import { LeaderboardDashboard } from './LeaderboardDashboard';
 import { ScoreUploader } from './ScoreUploader';
 import { ScoreImporter } from './ScoreImporter';
 import { ActivityLogTab } from './sync-modal-tabs/ActivityLogTab';
+import { DeletedFoldersTab } from './sync-modal-tabs/DeletedFoldersTab';
 import { EmptyState } from './sync-modal-tabs/EmptyState';
 import { Skeleton, SkeletonTableRows } from './Skeleton';
 import { collection, getDocs, updateDoc, doc, setDoc, serverTimestamp, onSnapshot } from 'firebase/firestore';
@@ -37,10 +38,10 @@ interface SyncModalProps {
   currentUser?: RevieweeData | null;
   backgroundTasks: any[];
   setBackgroundTasks: React.Dispatch<React.SetStateAction<any[]>>;
-  initialTab?: 'details' | 'scores' | 'import_scores' | 'archived' | 'leaderboard' | 'activity';
+  initialTab?: 'details' | 'scores' | 'import_scores' | 'archived' | 'deleted' | 'leaderboard' | 'activity';
   initialSection?: 'main' | 'search' | 'duplicates' | 'mapping';
   embeddedMode?: boolean;
-  onSubTabChange?: (tab: 'details' | 'scores' | 'import_scores' | 'archived' | 'leaderboard' | 'activity') => void;
+  onSubTabChange?: (tab: 'details' | 'scores' | 'import_scores' | 'archived' | 'deleted' | 'leaderboard' | 'activity') => void;
   onSectionChange?: (section: 'main' | 'search' | 'duplicates' | 'mapping') => void;
   scoreFolderId?: string;
 }
@@ -445,8 +446,8 @@ export const SyncModal: React.FC<SyncModalProps> = ({
   const [updatingUser, setUpdatingUser] = useState(false);
   
   // New tab state
-  const [activeTabState, setActiveTabRaw] = useState<'details' | 'scores' | 'import_scores' | 'archived' | 'leaderboard' | 'activity'>(initialTab || 'details');
-  const [targetTabState, setTargetTabState] = useState<'details' | 'scores' | 'import_scores' | 'archived' | 'leaderboard' | 'activity'>(initialTab || 'details');
+  const [activeTabState, setActiveTabRaw] = useState<'details' | 'scores' | 'import_scores' | 'archived' | 'deleted' | 'leaderboard' | 'activity'>(initialTab || 'details');
+  const [targetTabState, setTargetTabState] = useState<'details' | 'scores' | 'import_scores' | 'archived' | 'deleted' | 'leaderboard' | 'activity'>(initialTab || 'details');
 
   const showMapping = embeddedMode ? (initialSection === 'mapping') : showMappingState;
   const showDuplicates = embeddedMode ? (initialSection === 'duplicates') : showDuplicatesState;
@@ -512,7 +513,7 @@ export const SyncModal: React.FC<SyncModalProps> = ({
 
   const isTabLoading = isPending;
 
-  const handleTabChange = (tab: 'details' | 'scores' | 'import_scores' | 'archived' | 'leaderboard' | 'activity') => {
+  const handleTabChange = (tab: 'details' | 'scores' | 'import_scores' | 'archived' | 'deleted' | 'leaderboard' | 'activity') => {
     if (tab === activeTab) return;
     if (embeddedMode) {
       onSubTabChange?.(tab);
@@ -528,6 +529,7 @@ export const SyncModal: React.FC<SyncModalProps> = ({
         scores: 'scores',
         import_scores: 'import-scores',
         archived: 'archived',
+        deleted: 'deleted',
         leaderboard: 'leaderboard',
         activity: 'activity-log',
       };
@@ -3343,6 +3345,7 @@ function formatExamDates(dateStrings: string[]): string {
                   { key: "score-management", label: "Score Management", icon: BarChart3 },
                   { key: "upload-scores", label: "Import Scores", icon: UploadCloud },
                   { key: "archives", label: "Archives", icon: Archive },
+                  { key: "deleted-folders", label: "Deleted", icon: Trash2 },
                   { key: "analytics", label: "Analytics", icon: LineChart },
                   ...(isAdmin(currentUser) ? [
                     { key: "activity-log", label: "Activity Log", icon: ShieldCheck },
@@ -3361,7 +3364,9 @@ function formatExamDates(dateStrings: string[]): string {
                     isCurrentActive = showUsersList && activeTab === 'import_scores';
                   } else if (item.key === 'archives') {
                     isCurrentActive = showUsersList && activeTab === 'archived';
-                  } else if (item.key === 'leaderboard') {
+                  } else if (item.key === 'deleted-folders') {
+                    isCurrentActive = showUsersList && activeTab === 'deleted';
+                  } else if (item.key === 'analytics') {
                     isCurrentActive = showUsersList && activeTab === 'leaderboard';
                   } else if (item.key === 'activity-log') {
                     isCurrentActive = showUsersList && activeTab === 'activity';
@@ -3397,7 +3402,12 @@ function formatExamDates(dateStrings: string[]): string {
                           setShowDuplicates(false);
                           setShowMapping(false);
                           handleTabChange('archived');
-                        } else if (item.key === 'leaderboard') {
+                        } else if (item.key === 'deleted-folders') {
+                          setShowUsersList(true);
+                          setShowDuplicates(false);
+                          setShowMapping(false);
+                          handleTabChange('deleted');
+                        } else if (item.key === 'analytics') {
                           setShowUsersList(true);
                           setShowDuplicates(false);
                           setShowMapping(false);
@@ -4232,6 +4242,8 @@ function formatExamDates(dateStrings: string[]): string {
                       setBackgroundTasks={setBackgroundTasks}
                       scoreFolderId={scoreFolderId}
                     />
+                  ) : activeTab === 'deleted' ? (
+                    <DeletedFoldersTab currentUser={currentUser} />
                   ) : activeTab === 'activity' ? (
                     <ActivityLogTab activityLogs={activityLogs} loadingLogs={loadingLogs} onRefresh={fetchActivityLogs} error={activityLogsError} />
                   ) : activeTab === 'leaderboard' ? (

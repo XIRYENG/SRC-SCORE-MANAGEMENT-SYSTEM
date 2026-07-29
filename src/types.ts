@@ -46,6 +46,9 @@ export interface ScoreFolder {
   archivedBy?: string;
   restoredAt?: any;
   restoredBy?: string;
+  isDeleted?: boolean;
+  deletedAt?: any;
+  deletedBy?: string;
   schoolScope: 'all' | 'selected';
   selectedSchoolIds: string[];
   selectedSchoolNames: string[];

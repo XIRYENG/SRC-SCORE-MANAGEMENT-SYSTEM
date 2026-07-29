@@ -5,6 +5,7 @@ import { ScoreRecord, parseScores } from '../../utils/scoreParser';
 import { normalizeScoreCategory, normalizeScoreSubject } from '../../utils/scoreFieldResolver';
 import { useScoreFolders } from '../../hooks/useScoreFolders';
 import { isRevieweeInFolderScope } from '../../utils/folderScope';
+import { formatScore } from '../../utils/formatUtils';
 
 const SUBJECTS_BY_AREA: Record<string, { code: string; title: string }[]> = {
   "CLJ": [
@@ -263,7 +264,7 @@ export default function RevieweeScoresDashboard({ currentUser }: Props) {
             </div>
             <div>
               <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Overall Rating</p>
-              <p className="text-xl font-black text-slate-900">{overallRating.toFixed(2)}%</p>
+              <p className="text-xl font-black text-slate-900">{formatScore(overallRating)}%</p>
               <p className={`text-[10px] font-bold mt-0.5 ${getScoreColor(overallRating).text}`}>{getScoreColor(overallRating).label}</p>
             </div>
           </div>
@@ -276,7 +277,7 @@ export default function RevieweeScoresDashboard({ currentUser }: Props) {
               <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Highest Area</p>
               <p className="text-xl font-black text-slate-900">{highestArea?.area || 'N/A'}</p>
               {highestArea && (
-                <p className={`text-[10px] font-bold mt-0.5 ${getScoreColor(highestArea.rating).text}`}>{highestArea.rating.toFixed(2)}%</p>
+                <p className={`text-[10px] font-bold mt-0.5 ${getScoreColor(highestArea.rating).text}`}>{formatScore(highestArea.rating)}%</p>
               )}
             </div>
           </div>
@@ -335,7 +336,7 @@ export default function RevieweeScoresDashboard({ currentUser }: Props) {
                     </div>
                     <div>
                       <h3 className="font-black text-slate-900 text-sm">{stat.area}</h3>
-                      <p className="text-xs font-bold text-slate-900 mt-0.5">{stat.hasRecords ? `${stat.rating.toFixed(2)}%` : '0.00%'}</p>
+                      <p className="text-xs font-bold text-slate-900 mt-0.5">{stat.hasRecords ? `${formatScore(stat.rating)}%` : '0.00%'}</p>
                       <p className={`text-[9px] font-bold mt-0.5 ${stat.hasRecords ? colorInfo.text : 'text-slate-400'}`}>
                         {stat.hasRecords ? colorInfo.label : 'No Data'}
                       </p>
@@ -428,7 +429,7 @@ export default function RevieweeScoresDashboard({ currentUser }: Props) {
                       </td>
                       <td className="px-4 py-3 text-center font-black bg-slate-50/50">
                         {row.hasRecords ? (
-                          <span className={getScoreColor(row.rating).text.replace('text-', 'text-')}>{row.rating.toFixed(2)}%</span>
+                          <span className={getScoreColor(row.rating).text.replace('text-', 'text-')}>{formatScore(row.rating)}%</span>
                         ) : (
                           <span className="text-slate-400 font-bold">0.00%</span>
                         )}
@@ -463,7 +464,7 @@ export default function RevieweeScoresDashboard({ currentUser }: Props) {
                       </td>
                       <td className="px-4 py-3 text-center font-black bg-blue-100/50">
                         {majorAreaWideData.hasRecords ? (
-                          <span className="text-blue-700">{majorAreaWideData.rating.toFixed(2)}%</span>
+                          <span className="text-blue-700">{formatScore(majorAreaWideData.rating)}%</span>
                         ) : (
                           <span className="text-slate-400 font-bold">0.00%</span>
                         )}
@@ -489,7 +490,7 @@ export default function RevieweeScoresDashboard({ currentUser }: Props) {
               </div>
               <div className="flex items-baseline gap-4">
                 <span className="text-sm font-black text-emerald-950">Overall {selectedMajorArea}:</span>
-                <span className="text-base font-black text-emerald-800">{totalAreaEarned}/{totalAreaPossible} • {totalAreaRating.toFixed(2)}%</span>
+                <span className="text-base font-black text-emerald-800">{totalAreaEarned}/{totalAreaPossible} • {formatScore(totalAreaRating)}%</span>
                 <span className="text-xs font-bold text-emerald-600 uppercase tracking-wider ml-2">{getScoreColor(totalAreaRating).label}</span>
               </div>
             </div>
