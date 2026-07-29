@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Search, Download, Printer, Filter, ChevronDown, ChevronUp, Eye, CheckCircle2, FileText, Upload, ChevronLeft, ChevronRight, Check, MoreVertical, X, Pencil, Plus } from 'lucide-react';
+import { Search, Download, Printer, Filter, ChevronDown, ChevronUp, Eye, CheckCircle2, FileText, Upload, ChevronLeft, ChevronRight, Check, MoreVertical, X, Pencil, Plus, Archive, Settings2 } from 'lucide-react';
 import { useFirestoreUsers } from '../../hooks/useFirestoreUsers';
 import { normalizeScoreCategory, normalizeScoreSubject, getResolvedDetailedScore, getScoreFieldName } from '../../utils/scoreFieldResolver';
 import { getScoreLabel, getScoreColor } from '../DashboardShared';
@@ -9,12 +9,14 @@ import { ScoreRecord } from '../../utils/scoreParser';
 import { RevieweeData } from '../../types';
 import { CompactEditableScoreCell } from '../CompactEditableScoreCell';
 import { firestoreDb } from '../../utils/firebaseClient';
-import { doc, updateDoc, serverTimestamp, collection, query, onSnapshot } from 'firebase/firestore';
+import { doc, updateDoc, serverTimestamp, collection, query, onSnapshot, writeBatch, deleteField } from 'firebase/firestore';
 import { getCanonicalFullName } from '../../utils/nameNormalization';
 import { getSubjectsByArea, MajorAreaCode } from '../../config/criminologyCurriculum';
 import { DailyEvaluationRevieweeMatrix, DailyEvalRevieweeRow } from '../score-management/DailyEvaluationRevieweeMatrix';
 import { isValidUserRecord, resolveCanonicalUserIdentity, compareUsersAlphabetically, formatFormalName } from '../../services/userIdentityResolver';
 import { AnimatedSelect } from '../ui/animated-select';
+import { AnimatedDatePicker } from '../ui/animated-date-picker';
+import { ConfirmActionModal } from '../ConfirmActionModal';
 
 type ScoreManagementDashboardProps = {
   onViewDetails?: (user: RevieweeData) => void;
@@ -108,7 +110,7 @@ function parseOptionalNumber(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function getUnifiedScore(user: any, category: string, subject: string, selectedDate: string) {
+function getUnifiedScore(user: any, category: string, subject: string, selectedDate: string, scoreFolderId?: string) {
   const catKey = normalizeScoreCategory(category);
   const isDailyEval = catKey === 'dailyevaluation';
 
@@ -120,6 +122,9 @@ function getUnifiedScore(user: any, category: string, subject: string, selectedD
   if (user.assessmentRecords && typeof user.assessmentRecords === 'object') {
     Object.values(user.assessmentRecords).forEach((r: any) => {
       if (!r || typeof r !== 'object') return;
+
+      // Filter by folder if specified
+      if (scoreFolderId && r.scoreFolderId && r.scoreFolderId !== scoreFolderId) return;
 
       const recordCatKey = normalizeScoreCategory(r.category || '');
       if (recordCatKey !== catKey) return;
@@ -164,6 +169,9 @@ function getUnifiedScore(user: any, category: string, subject: string, selectedD
   if (user.scoresByDate && typeof user.scoresByDate === 'object') {
     const entries = Object.values(user.scoresByDate).filter((entry: any) => {
       if (!entry || typeof entry !== "object") return false;
+
+      // Filter by folder if specified
+      if (scoreFolderId && entry.scoreFolderId && entry.scoreFolderId !== scoreFolderId) return false;
 
       const entryCat = String(entry.category || "").toLowerCase();
       const entryCatKey = normalizeScoreCategory(entry.categoryKey || entryCat);
@@ -280,6 +288,64 @@ function getUnifiedScore(user: any, category: string, subject: string, selectedD
 export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onOpenSyncModal, currentUser, scoreFolderId, scoreFolderName }: ScoreManagementDashboardProps) {
   const { allUsers, loading } = useFirestoreUsers();
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Score events (shared manual columns) state
+  const [scoreEvents, setScoreEvents] = useState<any[]>([]);
+
+  // Subscribe to score_events
+  useEffect(() => {
+    if (!firestoreDb) return;
+    const q = query(collection(firestoreDb, "score_events"));
+    const unsub = onSnapshot(q, (snapshot) => {
+      const events = snapshot.docs.map(docSnap => ({
+        id: docSnap.id,
+        ...docSnap.data()
+      }));
+      setScoreEvents(events);
+    }, (err) => {
+      console.warn("Unable to load score_events collection:", err);
+    });
+    return () => unsub();
+  }, []);
+
+  // Modal control states
+  const [showAddScoreModal, setShowAddScoreModal] = useState(false);
+  const [addScoreMode, setAddScoreMode] = useState<'create' | 'existing'>('create');
+  
+  // Selected fields for Add Score form
+  const [addScoreRevieweeId, setAddScoreRevieweeId] = useState('');
+  const [addScoreCategory, setAddScoreCategory] = useState('Daily Evaluation');
+  const [addScoreMajorArea, setAddScoreMajorArea] = useState('CLJ');
+  const [addScoreSubject, setAddScoreSubject] = useState('');
+  const [addScoreDate, setAddScoreDate] = useState('');
+  const [addScoreTotalItems, setAddScoreTotalItems] = useState('50');
+  const [addScoreValue, setAddScoreValue] = useState('');
+  const [addScorePublicationStatus, setAddScorePublicationStatus] = useState<'published' | 'hidden'>('published');
+  
+  const [selectedScoreEventId, setSelectedScoreEventId] = useState<string | null>(null);
+  const [isSubmittingAddScore, setIsSubmittingAddScore] = useState(false);
+  
+  // Date editing modal state
+  const [showEditDateModal, setShowEditDateModal] = useState(false);
+  const [editingEventObj, setEditingEventObj] = useState<any | null>(null);
+  const [newDateInput, setNewDateInput] = useState('');
+  const [isSubmittingDateEdit, setIsSubmittingDateEdit] = useState(false);
+
+  // Total items editing modal state
+  const [showEditTotalItemsModal, setShowEditTotalItemsModal] = useState(false);
+  const [editingTotalItemsEventObj, setEditingTotalItemsEventObj] = useState<any | null>(null);
+  const [newTotalItemsInput, setNewTotalItemsInput] = useState('');
+  const [isSubmittingTotalItemsEdit, setIsSubmittingTotalItemsEdit] = useState(false);
+
+  // Column deletion confirmation state
+  const [showDeleteColumnConfirm, setShowDeleteColumnConfirm] = useState(false);
+  const [columnToDelete, setColumnToDelete] = useState<any | null>(null);
+  const [isDeletingColumn, setIsDeletingColumn] = useState(false);
+  const [deleteColumnError, setDeleteColumnError] = useState<string | null>(null);
+  const [activeRowMenuUserId, setActiveRowMenuUserId] = useState<string | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
+  const [hiddenSubjectIds, setHiddenSubjectIds] = useState<Set<string>>(new Set());
+  const [showColumnSelector, setShowColumnSelector] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState('Daily Evaluation');
   const [selectedDate, setSelectedDate] = useState('All Dates');
   const [selectedSchool, setSelectedSchool] = useState('All Schools');
@@ -355,6 +421,7 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
     category: string;
     currentScore: number | null;
     possiblePoints: number;
+    event?: any;
   } | null>(null);
   const [newScoreInput, setNewScoreInput] = useState('');
   const [newTotalInput, setNewTotalInput] = useState('100');
@@ -366,13 +433,15 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
     subject: string;
     currentScore: number | null;
     possiblePoints?: number;
+    event?: any;
   }) => {
     setEditingScoreCell({
       user: data.reviewee,
       subject: data.subject,
       category: data.category,
       currentScore: data.currentScore,
-      possiblePoints: data.possiblePoints || 100
+      possiblePoints: data.possiblePoints || 100,
+      event: data.event
     });
     setNewScoreInput(data.currentScore !== null ? String(data.currentScore) : '');
     setNewTotalInput(String(data.possiblePoints || 100));
@@ -382,7 +451,7 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
     if (!editingScoreCell) return;
     setSavingScore(true);
     try {
-      const { user, subject, category } = editingScoreCell;
+      const { user, subject, category, event } = editingScoreCell;
       const userDocId = user.doc_id || user.uid || user.id;
       if (!userDocId) throw new Error("User ID not found");
 
@@ -394,18 +463,68 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
         return;
       }
 
+      if (scoreNum < 0 || scoreNum > totalNum) {
+        alert(`Score must be between 0 and ${totalNum}.`);
+        setSavingScore(false);
+        return;
+      }
+
       const fieldName = getScoreFieldName(category, subject);
 
       if (!firestoreDb) throw new Error("Firestore client db not initialized");
       const userRef = doc(firestoreDb, 'users', userDocId);
-      await updateDoc(userRef, {
-        [fieldName]: scoreNum,
-        [`${fieldName}_total`]: totalNum,
-        last_score_update: serverTimestamp(),
-        updated_at: new Date().toISOString()
-      });
+
+      if (event) {
+        const evaluationDate = normalizeDateString(event.evaluationDate);
+        const normalizedCategoryKey = normalizeScoreCategory(category);
+        const scoreRecordKey = `${userDocId}_${normalizedCategoryKey}_${evaluationDate}`;
+        const subjectId = normalizeScoreCategory(category) === 'dailyevaluation'
+          ? normalizeIndividualSubjectCode(subject)
+          : String(event.majorAreaId || '').toLowerCase();
+
+        await updateDoc(userRef, {
+          [fieldName]: scoreNum,
+          [`${fieldName}_total`]: totalNum,
+          [`scoresByDate.${scoreRecordKey}`]: {
+            scoreEventId: event.id,
+            category: category,
+            categoryKey: normalizedCategoryKey,
+            score: scoreNum,
+            rawScore: scoreNum,
+            earnedPoints: scoreNum,
+            possiblePoints: totalNum,
+            percentage: (scoreNum / totalNum) * 100,
+            date: evaluationDate,
+            source: 'manual_entry',
+            remarks: 'Manually Entered Score',
+            updatedAt: new Date().toISOString()
+          },
+          [`assessmentRecords.${event.id}`]: {
+            scoreEventId: event.id,
+            category: category,
+            date: evaluationDate,
+            score: scoreNum,
+            totalScore: totalNum,
+            subject: subject,
+            subjectCode: subjectId,
+            scoreFolderId: scoreFolderId || "main",
+            publicationStatus: event.publicationStatus || 'published',
+            updatedAt: new Date().toISOString()
+          },
+          last_score_update: serverTimestamp(),
+          updated_at: new Date().toISOString()
+        });
+      } else {
+        await updateDoc(userRef, {
+          [fieldName]: scoreNum,
+          [`${fieldName}_total`]: totalNum,
+          last_score_update: serverTimestamp(),
+          updated_at: new Date().toISOString()
+        });
+      }
 
       setEditingScoreCell(null);
+      alert("Score saved successfully!");
     } catch (err: any) {
       console.error("Error saving score:", err);
       alert("Failed to save score: " + (err.message || err));
@@ -518,13 +637,21 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
       });
     });
 
+    // Merge in evaluation dates from scoreEvents as well
+    scoreEvents.forEach((evt: any) => {
+      if (evt.scoreFolderId === scoreFolderId && normalizeScoreCategory(evt.category) === normalizeScoreCategory(selectedCategory)) {
+        const normDate = normalizeDateString(evt.evaluationDate);
+        if (normDate) dts.add(normDate);
+      }
+    });
+
     return {
       categories: Array.from(cats).sort(),
       dates: Array.from(dts).sort((a, b) => new Date(b).getTime() - new Date(a).getTime()),
       schools: Array.from(schs).filter(Boolean).sort(),
       branches: Array.from(branchMap.values()).sort((a, b) => a.localeCompare(b))
     };
-  }, [allUsers, allReviewees, selectedCategory, firestoreBranches]);
+  }, [allUsers, allReviewees, selectedCategory, firestoreBranches, scoreEvents, scoreFolderId]);
 
   React.useEffect(() => {
     if (selectedDate !== 'All Dates' && !dates.includes(selectedDate)) {
@@ -542,16 +669,20 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
   ];
 
   const displayedSubjects = useMemo(() => {
+    let base: any[] = [];
     if (normalizeScoreCategory(selectedCategory) !== 'dailyevaluation') {
-      return subjects;
+      base = subjects;
+    } else {
+      const targetArea = selectedMajorArea === 'All Areas' ? 'CLJ' : selectedMajorArea;
+      const subSubjects = SUBJECTS_BY_AREA[targetArea];
+      if (subSubjects) {
+        base = subSubjects.map(s => ({ key: s.code, label: s.code, fullTitle: s.title }));
+      } else {
+        base = subjects.filter(s => s.label === targetArea);
+      }
     }
-    const targetArea = selectedMajorArea === 'All Areas' ? 'CLJ' : selectedMajorArea;
-    const subSubjects = SUBJECTS_BY_AREA[targetArea];
-    if (subSubjects) {
-      return subSubjects.map(s => ({ key: s.code, label: s.code, fullTitle: s.title }));
-    }
-    return subjects.filter(s => s.label === targetArea);
-  }, [selectedCategory, selectedMajorArea]);
+    return base.filter(s => !hiddenSubjectIds.has(s.key));
+  }, [selectedCategory, selectedMajorArea, subjects, hiddenSubjectIds]);
 
   // Apply filters and sorting
   const processedReviewees = useMemo(() => {
@@ -582,7 +713,7 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
       let totalPossible = 0;
 
       const subjScores = displayedSubjects.map(s => {
-        const unified = getUnifiedScore(user, selectedCategory, s.label, selectedDate);
+        const unified = getUnifiedScore(user, selectedCategory, s.label, selectedDate, scoreFolderId);
         const earned = unified.earnedScore;
         const possible = unified.possiblePoints;
 
@@ -730,14 +861,16 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
       return [id, name, ...scores, combined, rat, status];
     });
 
-    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(','), ...rows.map((e: any[]) => e.map(x => `"${String(x).replace(/"/g, '""')}"`).join(','))].join("\n");
-    const encodedUri = encodeURI(csvContent);
+    const csvString = [headers.join(','), ...rows.map((e: any[]) => e.map(x => `"${String(x).replace(/"/g, '""')}"`).join(','))].join("\n");
+    const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
+    link.setAttribute("href", url);
     link.setAttribute("download", `score_management_${selectedCategory.toLowerCase().replace(/\s+/g, '_')}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   const handlePrint = () => {
@@ -826,9 +959,483 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
     printWindow.document.close();
   };
 
+  // Active score event for editing date
+  const activeScoreEvent = useMemo(() => {
+    if (selectedDate === 'All Dates') return null;
+    return scoreEvents.find(evt => {
+      const isSameFolder = evt.scoreFolderId === scoreFolderId;
+      const isSameCat = normalizeScoreCategory(evt.category) === normalizeScoreCategory(selectedCategory);
+      // For non-daily evaluation, the majorAreaId of the scoreEvent matches standard board major areas
+      const isSameArea = String(evt.majorAreaId || '').toLowerCase() === String(selectedMajorArea).toLowerCase();
+      const isSameDate = normalizeDateString(evt.evaluationDate) === normalizeDateString(selectedDate);
+      return isSameFolder && isSameCat && (isDailyEvalCategory ? isSameArea : true) && isSameDate;
+    });
+  }, [scoreEvents, selectedCategory, selectedMajorArea, selectedDate, scoreFolderId, isDailyEvalCategory]);
+
+  // Helper to find a score event
+  const findExistingScoreEvent = (category: string, majorArea: string, subjectCode: string, date: string) => {
+    const normCat = normalizeScoreCategory(category);
+    const normArea = String(majorArea || '').toLowerCase().trim();
+    const normSubj = normCat === 'dailyevaluation' ? normalizeIndividualSubjectCode(subjectCode) : normArea;
+    const normDate = normalizeDateString(date);
+
+    return scoreEvents.find(evt => {
+      const isSameFolder = evt.scoreFolderId === scoreFolderId;
+      const isSameCat = normalizeScoreCategory(evt.category) === normCat;
+      const isSameArea = String(evt.majorAreaId || '').toLowerCase().trim() === normArea;
+      const isSameSubj = normCat === 'dailyevaluation' 
+        ? normalizeIndividualSubjectCode(evt.subjectId || evt.subjectName || '') === normSubj
+        : true;
+      const isSameDate = normalizeDateString(evt.evaluationDate) === normDate;
+
+      return isSameFolder && isSameCat && isSameArea && isSameSubj && isSameDate;
+    });
+  };
+
+  const handleAddScoreButtonClick = (prefilled?: {
+    reviewee?: any;
+    category?: string;
+    subject?: string;
+    date?: string;
+    isFirstScoreForSubject?: boolean;
+  }) => {
+    const initialReviewee = prefilled?.reviewee?.doc_id || prefilled?.reviewee?.uid || prefilled?.reviewee?.id || '';
+    const initialCategory = prefilled?.category || selectedCategory || 'Daily Evaluation';
+    
+    let initialMajorArea = selectedMajorArea === 'All Areas' ? 'CLJ' : selectedMajorArea;
+    let initialSubject = prefilled?.subject || '';
+
+    if (prefilled?.subject) {
+      if (normalizeScoreCategory(initialCategory) === 'dailyevaluation') {
+        Object.entries(SUBJECTS_BY_AREA).forEach(([area, subjs]) => {
+          if (subjs.some(s => s.code === prefilled.subject)) {
+            initialMajorArea = area;
+          }
+        });
+      } else {
+        initialMajorArea = prefilled.subject;
+      }
+    }
+
+    const initialDate = prefilled?.date || (selectedDate !== 'All Dates' ? selectedDate : '');
+    
+    setAddScoreRevieweeId(initialReviewee);
+    setAddScoreCategory(initialCategory);
+    setAddScoreMajorArea(initialMajorArea);
+    setAddScoreSubject(initialSubject);
+    setAddScoreDate(initialDate);
+    setAddScoreValue('');
+    setAddScorePublicationStatus('published');
+
+    if (initialDate) {
+      const existingEvt = findExistingScoreEvent(initialCategory, initialMajorArea, initialSubject || initialMajorArea, initialDate);
+      if (existingEvt) {
+        setAddScoreMode('existing');
+        setSelectedScoreEventId(existingEvt.id);
+        setAddScoreTotalItems(String(existingEvt.totalItems || 100));
+        setShowAddScoreModal(true);
+        return;
+      }
+    }
+
+    setAddScoreMode('create');
+    setSelectedScoreEventId(null);
+    setAddScoreTotalItems(prefilled?.isFirstScoreForSubject ? '' : '100');
+    setShowAddScoreModal(true);
+  };
+
+  const [duplicateColumnEvent, setDuplicateColumnEvent] = useState<any | null>(null);
+
+  const handleSaveManualAddScoreClick = async () => {
+    if (!addScoreDate) {
+      alert("Please select an evaluation date.");
+      return;
+    }
+    const totalItemsNum = Number(addScoreTotalItems);
+    if (isNaN(totalItemsNum) || totalItemsNum <= 0) {
+      alert("Please enter a valid positive number for total items.");
+      return;
+    }
+
+    const category = addScoreCategory;
+    const isDaily = normalizeScoreCategory(category) === 'dailyevaluation';
+    if (isDaily && !addScoreSubject) {
+      alert("Please select a subject area.");
+      return;
+    }
+
+    const normDate = normalizeDateString(addScoreDate);
+
+    // Check duplicate
+    const existingEvt = findExistingScoreEvent(
+      category,
+      addScoreMajorArea,
+      isDaily ? addScoreSubject : addScoreMajorArea,
+      normDate
+    );
+    if (existingEvt) {
+      alert("A score column already exists for this category, area, subject, and date.");
+      return;
+    }
+
+    setIsSubmittingAddScore(true);
+    try {
+      if (!firestoreDb) throw new Error("Firestore not initialized");
+
+      const majorArea = addScoreMajorArea;
+      const subjectName = isDaily ? addScoreSubject : addScoreMajorArea;
+      const subjectId = isDaily ? normalizeIndividualSubjectCode(addScoreSubject) : String(majorArea).toLowerCase();
+
+      const batch = writeBatch(firestoreDb);
+      const eventRef = doc(collection(firestoreDb, "score_events"));
+      
+      batch.set(eventRef, {
+        scoreFolderId: scoreFolderId || "main",
+        category: category,
+        majorAreaId: String(majorArea).toLowerCase(),
+        majorAreaName: majorArea,
+        subjectId: subjectId,
+        subjectName: subjectName,
+        evaluationDate: normDate,
+        totalItems: totalItemsNum,
+        publicationStatus: addScorePublicationStatus,
+        createdBy: currentUser?.uid || "admin",
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+
+      await batch.commit();
+
+      alert("Evaluation column created successfully!");
+      setShowAddScoreModal(false);
+    } catch (err: any) {
+      console.error("Error creating score event column:", err);
+      alert("Failed to create evaluation column: " + (err.message || err));
+    } finally {
+      setIsSubmittingAddScore(false);
+    }
+  };
+
+  const handleOpenEditDateModal = () => {
+    if (!activeScoreEvent) {
+      alert("No registered score column found for the selected date.");
+      return;
+    }
+    setEditingEventObj(activeScoreEvent);
+    setNewDateInput(activeScoreEvent.evaluationDate);
+    setShowEditDateModal(true);
+  };
+
+  const handleSaveColumnDate = async () => {
+    if (!editingEventObj || !newDateInput) return;
+    setIsSubmittingDateEdit(true);
+    try {
+      if (!firestoreDb) throw new Error("Firestore not initialized");
+      const normNewDate = normalizeDateString(newDateInput);
+      if (!normNewDate) {
+        alert("Please select a valid date.");
+        setIsSubmittingDateEdit(false);
+        return;
+      }
+
+      const duplicate = scoreEvents.find(evt => 
+        evt.id !== editingEventObj.id &&
+        evt.scoreFolderId === scoreFolderId &&
+        normalizeScoreCategory(evt.category) === normalizeScoreCategory(editingEventObj.category) &&
+        String(evt.majorAreaId || '').toLowerCase() === String(editingEventObj.majorAreaId || '').toLowerCase() &&
+        (normalizeScoreCategory(editingEventObj.category) === 'dailyevaluation' 
+          ? normalizeIndividualSubjectCode(evt.subjectId || '') === normalizeIndividualSubjectCode(editingEventObj.subjectId || '')
+          : true) &&
+        normalizeDateString(evt.evaluationDate) === normNewDate
+      );
+
+      if (duplicate) {
+        alert("A score column already exists for this category, area, subject, and date.");
+        setIsSubmittingDateEdit(false);
+        return;
+      }
+
+      const batch = writeBatch(firestoreDb);
+      const eventRef = doc(firestoreDb, "score_events", editingEventObj.id);
+      batch.update(eventRef, {
+        evaluationDate: normNewDate,
+        updatedAt: serverTimestamp()
+      });
+
+      allUsers.forEach((u: any) => {
+        const userId = u.doc_id || u.uid || u.id;
+        if (u.assessmentRecords?.[editingEventObj.id]) {
+          const userRef = doc(firestoreDb, "users", userId);
+          const oldDate = normalizeDateString(editingEventObj.evaluationDate);
+          const oldRecordKey = `${userId}_${normalizeScoreCategory(editingEventObj.category)}_${oldDate}`;
+          const newRecordKey = `${userId}_${normalizeScoreCategory(editingEventObj.category)}_${normNewDate}`;
+          
+          const oldScoreEntry = u.scoresByDate?.[oldRecordKey] || {};
+          
+          const updateObj: any = {
+            [`assessmentRecords.${editingEventObj.id}.date`]: normNewDate,
+            [`scoresByDate.${newRecordKey}`]: {
+              ...oldScoreEntry,
+              date: normNewDate,
+              updatedAt: new Date().toISOString()
+            },
+            [`scoresByDate.${oldRecordKey}`]: null
+          };
+          
+          batch.update(userRef, updateObj);
+        }
+      });
+
+      await batch.commit();
+      alert("Column date updated successfully!");
+      setShowEditDateModal(false);
+      setSelectedDate(normNewDate);
+    } catch (err: any) {
+      console.error("Error editing column date:", err);
+      alert("Failed to edit column date: " + (err.message || err));
+    } finally {
+      setIsSubmittingDateEdit(false);
+    }
+  };
+
+  const handleSaveTotalItems = async () => {
+    if (!editingTotalItemsEventObj || !newTotalItemsInput) return;
+    setIsSubmittingTotalItemsEdit(true);
+    try {
+      if (!firestoreDb) throw new Error("Firestore not initialized");
+      const normTotalItems = Number(newTotalItemsInput);
+      if (isNaN(normTotalItems) || normTotalItems <= 0) {
+        alert("Please enter a valid positive number.");
+        setIsSubmittingTotalItemsEdit(false);
+        return;
+      }
+
+      const batch = writeBatch(firestoreDb);
+      const eventRef = doc(firestoreDb, "score_events", editingTotalItemsEventObj.id);
+      batch.update(eventRef, {
+        totalItems: normTotalItems,
+        updatedAt: serverTimestamp()
+      });
+
+      allUsers.forEach((u: any) => {
+        const userId = u.doc_id || u.uid || u.id;
+        if (u.assessmentRecords?.[editingTotalItemsEventObj.id]) {
+          const userRef = doc(firestoreDb, "users", userId);
+          const record = u.assessmentRecords[editingTotalItemsEventObj.id];
+          const score = record.score ?? record.earnedPoints ?? 0;
+          const percentage = (score / normTotalItems) * 100;
+          
+          const evaluationDate = normalizeDateString(editingTotalItemsEventObj.evaluationDate);
+          const recordKey = `${userId}_${normalizeScoreCategory(editingTotalItemsEventObj.category)}_${evaluationDate}`;
+          const oldScoreEntry = u.scoresByDate?.[recordKey] || {};
+
+          const updateObj: any = {
+            [`assessmentRecords.${editingTotalItemsEventObj.id}.totalScore`]: normTotalItems,
+            [`scoresByDate.${recordKey}`]: {
+              ...oldScoreEntry,
+              possiblePoints: normTotalItems,
+              percentage: percentage,
+              updatedAt: new Date().toISOString()
+            }
+          };
+          
+          batch.update(userRef, updateObj);
+        }
+      });
+
+      await batch.commit();
+      alert("Column total items updated successfully!");
+      setShowEditTotalItemsModal(false);
+    } catch (err: any) {
+      console.error("Error editing total items:", err);
+      alert("Failed to edit total items: " + (err.message || err));
+    } finally {
+      setIsSubmittingTotalItemsEdit(false);
+    }
+  };
+
+  const handlePublishColumn = async (evt: any) => {
+    try {
+      if (!firestoreDb) throw new Error("Firestore not initialized");
+      const batch = writeBatch(firestoreDb);
+      const eventRef = doc(firestoreDb, "score_events", evt.id);
+      batch.update(eventRef, {
+        publicationStatus: 'published',
+        updatedAt: serverTimestamp()
+      });
+
+      allUsers.forEach((u: any) => {
+        const userId = u.doc_id || u.uid || u.id;
+        if (u.assessmentRecords?.[evt.id]) {
+          const userRef = doc(firestoreDb, "users", userId);
+          batch.update(userRef, {
+            [`assessmentRecords.${evt.id}.publicationStatus`]: 'published',
+            last_score_update: serverTimestamp()
+          });
+        }
+      });
+
+      await batch.commit();
+      alert("Column published successfully!");
+    } catch (err: any) {
+      console.error("Error publishing column:", err);
+      alert("Failed to publish column: " + (err.message || err));
+    }
+  };
+
+  const handleHideColumn = async (evt: any) => {
+    try {
+      if (!firestoreDb) throw new Error("Firestore not initialized");
+      const batch = writeBatch(firestoreDb);
+      const eventRef = doc(firestoreDb, "score_events", evt.id);
+      batch.update(eventRef, {
+        publicationStatus: 'hidden',
+        updatedAt: serverTimestamp()
+      });
+
+      allUsers.forEach((u: any) => {
+        const userId = u.doc_id || u.uid || u.id;
+        if (u.assessmentRecords?.[evt.id]) {
+          const userRef = doc(firestoreDb, "users", userId);
+          batch.update(userRef, {
+            [`assessmentRecords.${evt.id}.publicationStatus`]: 'hidden',
+            last_score_update: serverTimestamp()
+          });
+        }
+      });
+
+      await batch.commit();
+      alert("Column hidden successfully!");
+    } catch (err: any) {
+      console.error("Error hiding column:", err);
+      alert("Failed to hide column: " + (err.message || err));
+    }
+  };
+
+  const handleArchiveColumn = async (evt: any) => {
+    try {
+      if (!firestoreDb) throw new Error("Firestore not initialized");
+      const eventRef = doc(firestoreDb, "score_events", evt.id);
+      await updateDoc(eventRef, {
+        isArchived: true,
+        updatedAt: serverTimestamp()
+      });
+      alert("Column archived successfully!");
+    } catch (err: any) {
+      console.error("Error archiving column:", err);
+      alert("Failed to archive column: " + (err.message || err));
+    }
+  };
+
+  const handleUnarchiveColumn = async (evt: any) => {
+    try {
+      if (!firestoreDb) throw new Error("Firestore not initialized");
+      const eventRef = doc(firestoreDb, "score_events", evt.id);
+      await updateDoc(eventRef, {
+        isArchived: false,
+        updatedAt: serverTimestamp()
+      });
+      alert("Column restored successfully!");
+    } catch (err: any) {
+      console.error("Error unarchiving column:", err);
+      alert("Failed to unarchive column: " + (err.message || err));
+    }
+  };
+
+  const handleDeleteColumn = (evt: any) => {
+    setColumnToDelete(evt);
+    setDeleteColumnError(null);
+    setShowDeleteColumnConfirm(true);
+  };
+
+  const executeDeleteColumn = async () => {
+    if (!columnToDelete || !firestoreDb) return;
+    
+    setIsDeletingColumn(true);
+    setDeleteColumnError(null);
+    
+    try {
+      const evt = columnToDelete;
+      // 1. Delete the event itself
+      const eventRef = doc(firestoreDb, "score_events", evt.id);
+      
+      // 2. Prepare user updates
+      // We need to handle potential batch limit (500)
+      const MAX_BATCH_SIZE = 450; 
+      let currentBatch = writeBatch(firestoreDb);
+      let opCount = 0;
+
+      // Add event deletion to first batch
+      currentBatch.delete(eventRef);
+      opCount++;
+
+      // We only want to update users who actually have this record
+      const usersWithRecords = allUsers.filter((u: any) => u.assessmentRecords?.[evt.id]);
+      
+      for (const u of usersWithRecords) {
+        if (opCount >= MAX_BATCH_SIZE) {
+          await currentBatch.commit();
+          currentBatch = writeBatch(firestoreDb);
+          opCount = 0;
+        }
+
+        const userId = u.doc_id || u.uid || u.id;
+        const userRef = doc(firestoreDb, "users", userId);
+        const evaluationDate = normalizeDateString(evt.evaluationDate);
+        const recordKey = `${userId}_${normalizeScoreCategory(evt.category)}_${evaluationDate}`;
+        
+        const updateData: any = {
+          [`assessmentRecords.${evt.id}`]: deleteField(),
+          last_score_update: serverTimestamp()
+        };
+
+        // Only delete from scoresByDate if the scoreEventId matches to avoid deleting other subjects on the same date
+        const existingScoreEntry = u.scoresByDate?.[recordKey];
+        if (existingScoreEntry && existingScoreEntry.scoreEventId === evt.id) {
+          updateData[`scoresByDate.${recordKey}`] = deleteField();
+        }
+        
+        currentBatch.update(userRef, updateData);
+        opCount++;
+      }
+
+      if (opCount > 0) {
+        await currentBatch.commit();
+      }
+
+      setShowDeleteColumnConfirm(false);
+      setColumnToDelete(null);
+      alert("Evaluation column and associated scores deleted successfully!");
+    } catch (err: any) {
+      console.error("Error deleting column:", err);
+      setDeleteColumnError(err.message || "Failed to delete column. Please try again.");
+    } finally {
+      setIsDeletingColumn(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!showAddScoreModal) return;
+    const isDaily = normalizeScoreCategory(addScoreCategory) === 'dailyevaluation';
+    const subjVal = isDaily ? addScoreSubject : addScoreMajorArea;
+    const normDate = normalizeDateString(addScoreDate);
+
+    if (addScoreCategory && addScoreMajorArea && (isDaily ? addScoreSubject : true) && normDate) {
+      const existing = findExistingScoreEvent(addScoreCategory, addScoreMajorArea, subjVal, normDate);
+      if (existing) {
+        setAddScoreMode('existing');
+        setSelectedScoreEventId(existing.id);
+        setAddScoreTotalItems(String(existing.totalItems || 100));
+      } else {
+        setAddScoreMode('create');
+        setSelectedScoreEventId(null);
+      }
+    }
+  }, [addScoreCategory, addScoreMajorArea, addScoreSubject, addScoreDate, scoreEvents, showAddScoreModal]);
+
   return (
     <div className="flex flex-col min-h-0 h-full bg-white pb-16">
-      <div className="p-4 sm:p-6 pb-4 shrink-0">
+      <div className="p-4 sm:p-6 pb-4 shrink-0 relative z-40">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
           <div>
             <h1 className="text-xl sm:text-2xl font-black text-slate-900">Score Management</h1>
@@ -843,9 +1450,16 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
               {showFilters ? 'Hide Filters' : 'Filters'}
             </button>
             <button 
+              onClick={() => handleAddScoreButtonClick()}
+              className="flex items-center gap-1.5 px-3 sm:px-4 py-2 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700 transition-colors shadow-sm cursor-pointer animate-in fade-in zoom-in-95 duration-200"
+            >
+              <Plus size={14} />
+              Add Score
+            </button>
+            <button 
               onClick={() => {
                 if (onOpenUploadModal) onOpenUploadModal();
-                else if (onOpenSyncModal) onOpenSyncModal('main', 'import_scores');
+                else if (onOpenSyncModal) (onOpenSyncModal as any)('main', 'import_scores', scoreFolderId);
               }}
               className="flex items-center gap-1.5 px-3 sm:px-4 py-2 bg-teal-600 text-white rounded-lg text-xs font-bold hover:bg-teal-700 transition-colors shadow-sm cursor-pointer"
             >
@@ -871,7 +1485,7 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
 
         {/* Filters */}
         {showFilters && (
-          <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4 items-end mb-4 overflow-visible relative z-20">
+          <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4 items-end mb-4 overflow-visible relative z-40">
             {/* Category */}
             <div className="lg:col-span-1 relative">
               <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">Category</label>
@@ -888,7 +1502,20 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
 
             {/* Evaluation Date */}
             <div className="lg:col-span-1 relative">
-              <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">Evaluation Date</label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Evaluation Date</label>
+                {selectedDate !== 'All Dates' && activeScoreEvent && (
+                  <button
+                    type="button"
+                    onClick={handleOpenEditDateModal}
+                    className="text-[10px] text-teal-600 hover:text-teal-800 font-black flex items-center gap-0.5 cursor-pointer bg-transparent border-0 p-0"
+                    title="Edit column date for all reviewees"
+                  >
+                    <Pencil size={10} />
+                    Edit
+                  </button>
+                )}
+              </div>
               <AnimatedSelect
                 id="evaluation-date-filter"
                 value={selectedDate}
@@ -952,7 +1579,99 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
               />
             </div>
 
-            <div className={`${isDailyEvalCategory ? 'lg:col-span-1' : 'lg:col-span-2'} relative`}>
+            <div className="lg:col-span-1 relative flex flex-col justify-end">
+              <button
+                onClick={() => setShowArchived(!showArchived)}
+                className={`flex items-center justify-center gap-2 h-9 px-3 rounded-lg text-[10px] font-black uppercase tracking-tighter transition-all shadow-sm ${
+                  showArchived 
+                    ? 'bg-amber-100 text-amber-700 border-2 border-amber-300 ring-2 ring-amber-100' 
+                    : 'bg-slate-100 text-slate-500 border border-slate-200 hover:bg-slate-200'
+                }`}
+              >
+                {showArchived ? (
+                  <>
+                    <X size={14} className="animate-in fade-in zoom-in-50" />
+                    Hide Archived
+                  </>
+                ) : (
+                  <>
+                    <Archive size={14} />
+                    Show Archived
+                  </>
+                )}
+              </button>
+            </div>
+
+            <div className="lg:col-span-1 relative flex flex-col justify-end">
+              <div className="relative">
+                <button
+                  onClick={() => setShowColumnSelector(!showColumnSelector)}
+                  className={`flex items-center justify-center gap-2 h-9 w-full px-3 rounded-lg text-[10px] font-black uppercase tracking-tighter transition-all shadow-sm ${
+                    showColumnSelector 
+                      ? 'bg-teal-600 text-white border-teal-600' 
+                      : 'bg-white text-teal-600 border border-teal-200 hover:bg-teal-50'
+                  }`}
+                >
+                  <Settings2 size={14} />
+                  Columns
+                </button>
+
+                {showColumnSelector && (
+                  <AnimatePresence>
+                    <div className="fixed inset-0 z-40" onClick={() => setShowColumnSelector(false)} />
+                    <motion.div
+                      initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                      className="absolute right-0 top-full mt-2 w-64 bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden text-left"
+                    >
+                      <div className="p-3 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+                        <span className="text-[10px] font-black text-slate-500 uppercase tracking-wider">Visible Columns</span>
+                        <button 
+                          onClick={() => setHiddenSubjectIds(new Set())}
+                          className="text-[9px] font-black text-teal-600 hover:text-teal-700 uppercase"
+                        >
+                          Reset
+                        </button>
+                      </div>
+                      <div className="max-h-64 overflow-y-auto p-2 space-y-1">
+                        {(isDailyEvalCategory 
+                          ? (getSubjectsByArea(selectedMajorArea) || []) 
+                          : subjects
+                        ).map((s: any) => {
+                          const id = s.id || s.code || s.key;
+                          const code = s.subjectCode || s.code || s.label || s.key;
+                          const name = s.subjectName || s.title || s.label;
+                          const isVisible = !hiddenSubjectIds.has(id);
+                          
+                          return (
+                            <label key={id} className="flex items-center gap-2 p-2 hover:bg-slate-50 rounded-lg cursor-pointer transition-colors">
+                              <input
+                                type="checkbox"
+                                checked={isVisible}
+                                onChange={() => {
+                                  const next = new Set(hiddenSubjectIds);
+                                  if (isVisible) next.add(id);
+                                  else next.delete(id);
+                                  setHiddenSubjectIds(next);
+                                }}
+                                className="rounded border-slate-300 text-teal-600 focus:ring-teal-500"
+                              />
+                              <div className="flex flex-col">
+                                <span className="text-xs font-bold text-slate-800 uppercase">{code}</span>
+                                <span className="text-[9px] text-slate-400 truncate w-44">{name}</span>
+                              </div>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </motion.div>
+                  </AnimatePresence>
+                )}
+              </div>
+            </div>
+
+            <div className={`${isDailyEvalCategory ? 'lg:col-span-1' : 'lg:col-span-1'} relative`}>
               <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">Search</label>
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
@@ -979,13 +1698,14 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
             onToggleSelectAll={handleToggleSelectAllUsers}
             onToggleSelectUser={handleToggleSelectUser}
             onViewDetails={onViewDetails}
-            onUpdateScore={(user, subjCode, earned, possible) => {
+            onUpdateScore={(user, subjCode, earned, possible, eventObj) => {
               handleEditScoreClick({
                 reviewee: user,
                 category: selectedCategory,
                 subject: subjCode,
                 currentScore: earned,
                 possiblePoints: possible,
+                event: eventObj
               });
             }}
             sortField={sortField}
@@ -1002,6 +1722,43 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
                 setSortField(field);
                 setSortDirection('asc');
               }
+            }}
+            scoreEvents={scoreEvents}
+            scoreFolderId={scoreFolderId}
+            hiddenSubjectIds={hiddenSubjectIds}
+            setHiddenSubjectIds={setHiddenSubjectIds}
+            onEditColumnDate={(evt) => {
+              setEditingEventObj(evt);
+              setNewDateInput(evt.evaluationDate);
+              setShowEditDateModal(true);
+            }}
+            onEditTotalItems={(evt) => {
+              setEditingTotalItemsEventObj(evt);
+              setNewTotalItemsInput(String(evt.totalItems || 100));
+              setShowEditTotalItemsModal(true);
+            }}
+            onPublishColumn={handlePublishColumn}
+            onHideColumn={handleHideColumn}
+            onArchiveColumn={handleArchiveColumn}
+            onUnarchiveColumn={handleUnarchiveColumn}
+            onDeleteColumn={handleDeleteColumn}
+            showArchived={showArchived}
+            onAddScoreToExisting={(user, evt) => {
+              handleEditScoreClick({
+                reviewee: user,
+                category: selectedCategory,
+                subject: evt.subjectId || evt.subjectName,
+                currentScore: null,
+                possiblePoints: evt.totalItems || 100,
+                event: evt
+              });
+            }}
+            onAddFirstScoreForSubject={(subjectCode) => {
+              handleAddScoreButtonClick({
+                category: selectedCategory,
+                subject: subjectCode,
+                isFirstScoreForSubject: true
+              });
             }}
           />
         ) : (
@@ -1176,7 +1933,7 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
                           )}
                         </td>
                         <td className="px-4 py-3 text-center">
-                          <div className="flex items-center justify-center gap-1">
+                          <div className="flex items-center justify-center gap-1 relative">
                             <button 
                               onClick={() => onViewDetails && onViewDetails(user)}
                               className="flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold text-teal-700 bg-teal-50 border border-teal-200 hover:bg-teal-100 rounded-md transition-colors"
@@ -1184,9 +1941,58 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
                               <Eye size={14} />
                               View Details
                             </button>
-                            <button className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-md transition-colors">
-                              <MoreVertical size={14} />
-                            </button>
+                            <div className="relative">
+                              <button 
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setActiveRowMenuUserId(activeRowMenuUserId === rowKey ? null : rowKey);
+                                }}
+                                className={`p-1.5 rounded-md transition-all cursor-pointer ${
+                                  activeRowMenuUserId === rowKey 
+                                    ? 'bg-teal-600 text-white shadow-md' 
+                                    : 'text-slate-400 hover:text-slate-600 hover:bg-slate-100'
+                                }`}
+                              >
+                                <MoreVertical size={14} />
+                              </button>
+
+                              <AnimatePresence>
+                                {activeRowMenuUserId === rowKey && (
+                                  <>
+                                    <div className="fixed inset-0 z-30" onClick={() => setActiveRowMenuUserId(null)} />
+                                    <motion.div 
+                                      initial={{ opacity: 0, x: 10, scale: 0.95 }}
+                                      animate={{ opacity: 1, x: 0, scale: 1 }}
+                                      exit={{ opacity: 0, x: 10, scale: 0.95 }}
+                                      transition={{ duration: 0.15 }}
+                                      className="absolute right-full mr-2 top-0 w-48 bg-white border border-slate-200 rounded-xl shadow-xl z-40 overflow-hidden divide-y divide-slate-100 text-left py-1"
+                                    >
+                                      <div className="px-3 py-2 bg-slate-50/50">
+                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Reviewee Actions</p>
+                                        <p className="text-xs font-bold text-slate-700 truncate">{formatFormalName(resolveCanonicalUserIdentity(user))}</p>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setActiveRowMenuUserId(null);
+                                          onViewDetails && onViewDetails(user);
+                                        }}
+                                        className="w-full px-3 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-50 hover:text-teal-600 flex items-center gap-2 transition-colors cursor-pointer"
+                                      >
+                                        <Eye size={13} /> View Full Profile
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => setActiveRowMenuUserId(null)}
+                                        className="w-full px-3 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-50 flex items-center gap-2 transition-colors cursor-pointer"
+                                      >
+                                        <FileText size={13} /> Performance Report
+                                      </button>
+                                    </motion.div>
+                                  </>
+                                )}
+                              </AnimatePresence>
+                            </div>
                           </div>
                         </td>
                       </tr>
@@ -1268,6 +2074,276 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
           </div>
         </div>
       )}
+      {/* Manual Add Score Modal */}
+      {showAddScoreModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full p-6 space-y-4 border border-slate-200 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center pb-3 border-b border-slate-100">
+              <div>
+                <h3 className="text-base font-black text-slate-900">Add Evaluation Column</h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Create a new evaluation column. You can enter and edit individual scores directly in the table cells.
+                </p>
+              </div>
+              <button 
+                onClick={() => {
+                  setShowAddScoreModal(false);
+                  setDuplicateColumnEvent(null);
+                }}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {/* Category */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">Category</label>
+                  <AnimatedSelect
+                    value={addScoreCategory}
+                    onChange={(val) => {
+                      setAddScoreCategory(val);
+                      setAddScoreSubject('');
+                    }}
+                    options={categories.map(cat => ({ value: cat, label: cat }))}
+                    className="w-full"
+                    triggerClassName="h-11 rounded-xl bg-slate-50 border-2 border-slate-100 px-4 text-sm font-semibold text-slate-900"
+                  />
+                </div>
+
+                {/* Major Area */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">Major Area</label>
+                  <AnimatedSelect
+                    value={addScoreMajorArea}
+                    onChange={setAddScoreMajorArea}
+                    options={[
+                      { value: 'CLJ', label: 'CLJ' },
+                      { value: 'LEA', label: 'LEA' },
+                      { value: 'CDI', label: 'CDI' },
+                      { value: 'FS', label: 'FS' },
+                      { value: 'CRIM', label: 'CRIM' },
+                      { value: 'CA', label: 'CA' },
+                    ]}
+                    className="w-full"
+                    triggerClassName="h-11 rounded-xl bg-slate-50 border-2 border-slate-100 px-4 text-sm font-semibold text-slate-900"
+                  />
+                </div>
+              </div>
+
+              {/* Subject Selection for Daily Evaluation */}
+              {normalizeScoreCategory(addScoreCategory) === 'dailyevaluation' && (
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">Subject Area</label>
+                  <AnimatedSelect
+                    value={addScoreSubject}
+                    onChange={setAddScoreSubject}
+                    options={(SUBJECTS_BY_AREA[addScoreMajorArea] || []).map(s => ({
+                      value: s.code,
+                      label: `${s.code} - ${s.title}`
+                    }))}
+                    placeholder="Select Subject..."
+                    className="w-full"
+                    triggerClassName="h-11 rounded-xl bg-slate-50 border-2 border-slate-100 px-4 text-sm font-semibold text-slate-900"
+                  />
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {/* Evaluation Date */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">Evaluation Date</label>
+                  <AnimatedDatePicker
+                    value={addScoreDate}
+                    onChange={setAddScoreDate}
+                    triggerClassName="bg-slate-50 border-2 border-slate-100"
+                  />
+                </div>
+
+                {/* Total Items */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">Total Items</label>
+                  <input
+                    type="number"
+                    value={addScoreTotalItems}
+                    onChange={(e) => setAddScoreTotalItems(e.target.value)}
+                    min="1"
+                    className="w-full h-11 rounded-xl bg-slate-50 border border-slate-200 px-4 text-sm font-semibold text-slate-900 focus:border-teal-500 focus:ring-0 outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {/* Publication Status */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">Publication Status</label>
+                  <AnimatedSelect
+                    value={addScorePublicationStatus}
+                    onChange={(val: any) => setAddScorePublicationStatus(val)}
+                    options={[
+                      { value: 'published', label: 'Published' },
+                      { value: 'hidden', label: 'Hidden' }
+                    ]}
+                    className="w-full"
+                    triggerClassName="h-11 rounded-xl bg-slate-50 border-2 border-slate-100 px-4 text-sm font-semibold text-slate-900"
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  onClick={() => setShowAddScoreModal(false)}
+                  className="px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSaveManualAddScoreClick}
+                  disabled={isSubmittingAddScore}
+                  className="px-5 py-2.5 text-xs font-bold text-white bg-teal-600 hover:bg-teal-700 rounded-xl shadow-sm transition-colors flex items-center gap-2 disabled:opacity-50"
+                >
+                  {isSubmittingAddScore && <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                  Create Column
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Date Modal */}
+      {showEditDateModal && editingEventObj && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 space-y-4 border border-slate-200">
+            <div className="flex justify-between items-center pb-3 border-b border-slate-100">
+              <div>
+                <h3 className="text-base font-black text-slate-900">Edit Column Date</h3>
+                <p className="text-xs text-slate-500 mt-0.5 uppercase tracking-wider font-bold text-teal-700">
+                  {editingEventObj.category} • {editingEventObj.subjectName || editingEventObj.majorAreaName}
+                </p>
+              </div>
+              <button 
+                onClick={() => setShowEditDateModal(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-xs text-amber-800 leading-relaxed space-y-1">
+              <p className="font-bold">⚠️ Warning:</p>
+              <p>This date is shared by all scores in this column. Updating it will change the date for every connected reviewee score.</p>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">New Evaluation Date</label>
+                <AnimatedDatePicker 
+                  value={newDateInput}
+                  onChange={setNewDateInput}
+                  triggerClassName="bg-slate-50 border-2 border-slate-100"
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+              <button
+                onClick={() => setShowEditDateModal(false)}
+                className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveColumnDate}
+                disabled={isSubmittingDateEdit}
+                className="px-5 py-2 text-xs font-bold text-white bg-teal-600 hover:bg-teal-700 rounded-lg shadow-sm transition-colors flex items-center gap-2 disabled:opacity-50"
+              >
+                {isSubmittingDateEdit && <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                Update Date
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Total Items Modal */}
+      {showEditTotalItemsModal && editingTotalItemsEventObj && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 space-y-4 border border-slate-200">
+            <div className="flex justify-between items-center pb-3 border-b border-slate-100">
+              <div>
+                <h3 className="text-base font-black text-slate-900">Edit Column Total Items</h3>
+                <p className="text-xs text-slate-500 mt-0.5 uppercase tracking-wider font-bold text-teal-700">
+                  {editingTotalItemsEventObj.category} • {editingTotalItemsEventObj.subjectName || editingTotalItemsEventObj.majorAreaName}
+                </p>
+              </div>
+              <button 
+                onClick={() => setShowEditTotalItemsModal(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-xs text-amber-800 leading-relaxed space-y-1">
+              <p className="font-bold">⚠️ Warning:</p>
+              <p>Updating total items will recalculate the percentage rating for all connected reviewees who have scored in this column.</p>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">New Total Items</label>
+                <input 
+                  type="number"
+                  value={newTotalItemsInput}
+                  onChange={e => setNewTotalItemsInput(e.target.value)}
+                  min="1"
+                  placeholder="e.g. 50"
+                  className="w-full h-11 rounded-xl bg-slate-50 border border-slate-200 px-4 text-sm font-semibold text-slate-900 focus:border-teal-500 focus:ring-0 outline-none"
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+              <button
+                onClick={() => setShowEditTotalItemsModal(false)}
+                className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveTotalItems}
+                disabled={isSubmittingTotalItemsEdit}
+                className="px-5 py-2 text-xs font-bold text-white bg-teal-600 hover:bg-teal-700 rounded-lg shadow-sm transition-colors flex items-center gap-2 disabled:opacity-50"
+              >
+                {isSubmittingTotalItemsEdit && <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                Update Total Items
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Column Confirmation Modal */}
+      <ConfirmActionModal
+        isOpen={showDeleteColumnConfirm}
+        onClose={() => !isDeletingColumn && setShowDeleteColumnConfirm(false)}
+        onConfirm={executeDeleteColumn}
+        isLoading={isDeletingColumn}
+        error={deleteColumnError}
+        title="Delete Evaluation Column"
+        subtitle="Permanent Data Removal"
+        message="Are you sure you want to delete this evaluation column and all its scores permanently? This will remove the records from all affected reviewees. This action is IRREVERSIBLE."
+        confirmWord="DELETE"
+        recordName={columnToDelete ? `${columnToDelete.category} - ${columnToDelete.subjectName || columnToDelete.majorAreaId || 'Unknown Subject'}` : ''}
+        recordDetails={columnToDelete ? [
+          { label: 'Evaluation Date', value: columnToDelete.evaluationDate },
+          { label: 'Total Items', value: String(columnToDelete.totalItems || 100) },
+          { label: 'Status', value: columnToDelete.publicationStatus || 'N/A' }
+        ] : []}
+      />
     </div>
   );
 }

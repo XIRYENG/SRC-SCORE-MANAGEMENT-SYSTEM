@@ -4,6 +4,7 @@ import { fetchWithFirebaseAuth } from '../utils/auth';
 import { motion, AnimatePresence } from 'motion/react';
 import { Loader2, X, RefreshCw, AlertCircle, AlertTriangle, CheckCircle2, Edit, Search, Check, Lock, Clock, ChevronUp, ChevronDown, Printer, Download, FileText, Upload, Users, MoreVertical, Trash2, CloudUpload, ChevronLeft, HelpCircle, Shield, LayoutDashboard, BarChart3, UploadCloud, Archive, LineChart, ShieldCheck, Settings } from 'lucide-react';
 import { AnimatedSelect, type AnimatedSelectOption } from './ui/animated-select';
+import { AnimatedDatePicker } from './ui/animated-date-picker';
 import { UnmatchedRecordsModal } from './UnmatchedRecordsModal';
 import { Toast } from './Toast';
 import { LeaderboardDashboard } from './LeaderboardDashboard';
@@ -41,6 +42,7 @@ interface SyncModalProps {
   embeddedMode?: boolean;
   onSubTabChange?: (tab: 'details' | 'scores' | 'import_scores' | 'archived' | 'leaderboard' | 'activity') => void;
   onSectionChange?: (section: 'main' | 'search' | 'duplicates' | 'mapping') => void;
+  scoreFolderId?: string;
 }
 
 function getCategoryShortName(cat: string): string {
@@ -219,7 +221,8 @@ export const SyncModal: React.FC<SyncModalProps> = ({
   initialSection = 'main',
   embeddedMode = false,
   onSubTabChange,
-  onSectionChange
+  onSectionChange,
+  scoreFolderId
 }) => {
   const [showImportCard, setShowImportCard] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
@@ -3568,11 +3571,19 @@ function formatExamDates(dateStrings: string[]): string {
                   <div className="grid grid-cols-2 gap-2">
                     <div className="space-y-2">
                       <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Date From</label>
-                      <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="w-full p-3 border border-slate-200 rounded-xl bg-slate-50 text-sm focus:ring-2 focus:ring-slate-900 focus:outline-none transition-all" />
+                      <AnimatedDatePicker
+                        value={dateFrom}
+                        onChange={setDateFrom}
+                        triggerClassName="h-11 rounded-xl bg-slate-50 border-2 border-slate-100"
+                      />
                     </div>
                     <div className="space-y-2">
                       <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Date To</label>
-                      <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="w-full p-3 border border-slate-200 rounded-xl bg-slate-50 text-sm focus:ring-2 focus:ring-slate-900 focus:outline-none transition-all" />
+                      <AnimatedDatePicker
+                        value={dateTo}
+                        onChange={setDateTo}
+                        triggerClassName="h-11 rounded-xl bg-slate-50 border-2 border-slate-100"
+                      />
                     </div>
                   </div>
                 )}
@@ -4090,7 +4101,14 @@ function formatExamDates(dateStrings: string[]): string {
                             )}
                           </div>
                           {activeTab === 'scores' && (
-                            <ScoreUploader allUsers={allUsers} fetchAllUsers={fetchAllUsers} currentUser={currentUser} backgroundTasks={backgroundTasks} setBackgroundTasks={setBackgroundTasks} />
+                            <ScoreUploader 
+                              allUsers={allUsers} 
+                              fetchAllUsers={fetchAllUsers} 
+                              currentUser={currentUser} 
+                              backgroundTasks={backgroundTasks} 
+                              setBackgroundTasks={setBackgroundTasks} 
+                              scoreFolderId={scoreFolderId}
+                            />
                           )}
                         </>
                       )}
@@ -4208,6 +4226,7 @@ function formatExamDates(dateStrings: string[]): string {
                       currentUser={currentUser}
                       backgroundTasks={backgroundTasks}
                       setBackgroundTasks={setBackgroundTasks}
+                      scoreFolderId={scoreFolderId}
                     />
                   ) : activeTab === 'activity' ? (
                     <ActivityLogTab activityLogs={activityLogs} loadingLogs={loadingLogs} onRefresh={fetchActivityLogs} error={activityLogsError} />
@@ -5780,11 +5799,10 @@ function formatExamDates(dateStrings: string[]): string {
                   <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5 ml-1">
                     Evaluation Date
                   </label>
-                  <input
-                    type="date"
+                  <AnimatedDatePicker
                     value={manualScoreDate}
-                    onChange={(e) => setManualScoreDate(e.target.value)}
-                    className="w-full h-11 rounded-2xl bg-slate-50 border-2 border-slate-100 px-4 text-sm font-bold text-slate-900 focus:border-blue-500 focus:ring-0 transition-all outline-none dark:bg-white/5 dark:border-white/10 dark:text-white"
+                    onChange={setManualScoreDate}
+                    triggerClassName="h-11 rounded-2xl bg-slate-50 border-2 border-slate-100"
                   />
                 </div>
                 <div>

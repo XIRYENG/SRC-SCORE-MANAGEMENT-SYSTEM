@@ -32,8 +32,12 @@ import {
 } from 'lucide-react';
 import { EmptyState } from './sync-modal-tabs/EmptyState';
 import { getUserRole, isReviewee } from '../utils/roleUtils';
+import { AnimatedDatePicker } from './ui/animated-date-picker';
 import { isValidRevieweeRecord } from '../services/userIdentityResolver';
 import { getCanonicalFullName, normalizeNameForComparison } from '../utils/nameNormalization';
+import { collection, doc, getDocs, setDoc, serverTimestamp } from 'firebase/firestore';
+import { firestoreDb } from '../utils/firebaseClient';
+import { normalizeScoreCategory } from '../utils/scoreFieldResolver';
 import {
   processCsvRows,
   validateCsvHeaders,
@@ -276,6 +280,7 @@ interface ScoreUploaderProps {
   currentUser?: any;
   backgroundTasks: any[];
   setBackgroundTasks: React.Dispatch<React.SetStateAction<any[]>>;
+  scoreFolderId?: string;
 }
 
 type UploadStatus = 'idle' | 'working' | 'success' | 'error';
@@ -286,7 +291,8 @@ export const ScoreUploader: React.FC<ScoreUploaderProps> = ({
   fetchAllUsers,
   currentUser,
   backgroundTasks,
-  setBackgroundTasks
+  setBackgroundTasks,
+  scoreFolderId
 }) => {
   const [isImporting, setIsImporting] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<UploadStatus>('idle');
@@ -355,22 +361,29 @@ export const ScoreUploader: React.FC<ScoreUploaderProps> = ({
   const [filterBranchPreview, setFilterBranchPreview] = useState<string>('ALL');
   const [filterBatchPreview, setFilterBatchPreview] = useState<string>('ALL');
 
+  // Memoized unique list of all active reviewees for the manual match modal
+  const uniqueAllReviewees = useMemo(() => {
+    const unique = new Map<string, any>();
+    allUsers.forEach(u => {
+      // Basic filtering: skip admins/staff and deleted/archived accounts
+      const role = String(u.role || u.user_role || u.userRole || u.Role || '').trim().toLowerCase();
+      if (role === 'admin' || role === 'staff') return;
+      if (u.is_archived || u.isDeleted || u.deleted || u.is_deleted) return;
+      
+      // Ensure we have a valid reviewee (usually has an ID number or specific role)
+      if (role !== 'reviewee' && role !== 'student' && !u.id_number && !u.seq_id) return;
+
+      const key = u.uid || u.doc_id || u.id;
+      if (key && !unique.has(key)) {
+        unique.set(key, u);
+      }
+    });
+    return Array.from(unique.values());
+  }, [allUsers]);
+
   // Eligible reviewees based on active database filters
   const eligibleReviewees = useMemo(() => {
-    return allUsers.filter(u => {
-      if (!isValidRevieweeRecord(u)) return false;
-      // Role is Reviewee
-      if (!isReviewee(u) && getUserRole(u) !== 'Reviewee') return false;
-      const roleStr = String(u.role || '').toLowerCase();
-      if (roleStr === 'admin' || roleStr === 'staff') return false;
-
-      // Not deleted, archived, disabled, inactive
-      if (u.isDeleted || u.deleted || u.is_deleted) return false;
-      if (u.is_archived || u.archived || u.archiveStatus === 'passed' || u.status === 'archived') return false;
-      
-      const accStatus = String(u.accountStatus || u.status || '').toLowerCase();
-      if (accStatus === 'disabled' || accStatus === 'inactive' || accStatus === 'deleted' || accStatus === 'archived') return false;
-
+    return uniqueAllReviewees.filter(u => {
       // School filter
       if (filterSchoolPreview && filterSchoolPreview !== 'ALL') {
         const uSchool = String(u.school_name || u.schoolName || '').trim().toLowerCase();
@@ -391,7 +404,7 @@ export const ScoreUploader: React.FC<ScoreUploaderProps> = ({
 
       return true;
     });
-  }, [allUsers, filterSchoolPreview, filterBranchPreview, filterBatchPreview]);
+  }, [uniqueAllReviewees, filterSchoolPreview, filterBranchPreview, filterBatchPreview]);
 
   // Unique options for dynamic dropdowns
   const uniqueSchools = useMemo(() => {
@@ -736,10 +749,112 @@ export const ScoreUploader: React.FC<ScoreUploaderProps> = ({
     setShowConfigModal(false);
 
     try {
-      const formattedUpdates = rowsToUpload.map(u => ({
-        doc_id: u.matchedUserId || u.matchedUser?.doc_id || u.matchedUser?.uid,
-        data: u.updateData
-      })).filter(u => u.doc_id && typeof u.doc_id === 'string' && u.doc_id !== 'unmatched' && u.data);
+      if (!firestoreDb) throw new Error("Firestore database is not initialized.");
+
+      // Fetch score events to link scores properly to a column
+      const eventsSnap = await getDocs(collection(firestoreDb, 'score_events'));
+      const events = eventsSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+
+      const normCat = normalizeScoreCategory(selectedCategory);
+      const normSubj = selectedSubject.toLowerCase();
+      const normDate = selectedDate;
+
+      let existingEvent = events.find(evt => {
+        const isSameCat = normalizeScoreCategory(evt.category) === normCat;
+        const isSameSubj = String(evt.subjectId || evt.subjectName || evt.majorAreaId || '').toLowerCase().trim() === normSubj;
+        const isSameDate = evt.evaluationDate === normDate;
+        return isSameCat && isSameSubj && isSameDate;
+      });
+
+      let eventId = '';
+      let totalItems = 100;
+      const firstReadyRow = rowsToUpload.find(r => r.possiblePoints !== null && r.possiblePoints > 0);
+      if (firstReadyRow) {
+        totalItems = Number(firstReadyRow.possiblePoints);
+      }
+
+      if (existingEvent) {
+        eventId = existingEvent.id;
+        totalItems = existingEvent.totalItems || totalItems;
+      } else {
+        const eventRef = doc(collection(firestoreDb, "score_events"));
+        eventId = eventRef.id;
+        await setDoc(eventRef, {
+          scoreFolderId: scoreFolderId || "main",
+          category: selectedCategory,
+          majorAreaId: selectedSubject.toLowerCase(),
+          majorAreaName: selectedSubject,
+          subjectId: selectedSubject.toLowerCase(),
+          subjectName: selectedSubject,
+          evaluationDate: selectedDate,
+          totalItems: totalItems,
+          publicationStatus: "published",
+          createdBy: currentUser?.uid || "admin",
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+      }
+
+      const subjectKey = selectedSubject.toLowerCase();
+      const categoryKey = selectedCategory.toLowerCase().replace(/\s+/g, '');
+      let fieldName = '';
+      if (categoryKey === 'preboard') {
+        fieldName = `preboard_${subjectKey}`;
+      } else if (categoryKey === 'pretest' || categoryKey === 'diagnostic') {
+        fieldName = `diag_${subjectKey}`;
+      } else if (categoryKey === 'posttest' || categoryKey === 'post') {
+        fieldName = `post_${subjectKey}`;
+      } else {
+        fieldName = `score_${subjectKey}_${categoryKey}`;
+      }
+
+      const formattedUpdates = rowsToUpload.map(u => {
+        const userDocId = u.matchedUserId || u.matchedUser?.doc_id || u.matchedUser?.uid;
+        const score = Number(u.earnedPoints || 0);
+        const possible = Number(u.possiblePoints || totalItems || 100);
+        const normalizedCategoryKey = normalizeScoreCategory(selectedCategory);
+        const scoreRecordKey = `${userDocId}_${normalizedCategoryKey}_${selectedDate}`;
+
+        const data: any = {
+          ...(u.updateData || {}),
+          [fieldName]: score,
+          [`${fieldName}_total`]: possible,
+          [`scoresByDate.${scoreRecordKey}`]: {
+            scoreEventId: eventId,
+            category: selectedCategory,
+            categoryKey: normalizedCategoryKey,
+            score: score,
+            rawScore: score,
+            earnedPoints: score,
+            possiblePoints: possible,
+            percentage: (score / possible) * 100,
+            date: selectedDate,
+            scoreFolderId: scoreFolderId || "main",
+            source: 'score_import',
+            remarks: 'Imported via Batch Mapping',
+            updatedAt: new Date().toISOString()
+          },
+          [`assessmentRecords.${eventId}`]: {
+            scoreEventId: eventId,
+            category: selectedCategory,
+            date: selectedDate,
+            score: score,
+            totalScore: possible,
+            subject: selectedSubject,
+            subjectCode: selectedSubject.toLowerCase(),
+            scoreFolderId: scoreFolderId || "main",
+            publicationStatus: "published",
+            updatedAt: new Date().toISOString()
+          },
+          last_score_update: serverTimestamp(),
+          updated_at: new Date().toISOString()
+        };
+
+        return {
+          doc_id: userDocId,
+          data
+        };
+      }).filter(u => u.doc_id && typeof u.doc_id === 'string' && u.doc_id !== 'unmatched' && u.data);
 
       const res = await fetch('/api/batch-update-scores', {
         method: 'POST',
@@ -1197,18 +1312,11 @@ export const ScoreUploader: React.FC<ScoreUploaderProps> = ({
                     <label className="block text-xs font-black uppercase text-slate-500 mb-1.5">
                       Exam Date
                     </label>
-                    <div className="relative">
-                      <input
-                        type="date"
-                        value={selectedDate}
-                        onChange={(ev) => setSelectedDate(ev.target.value)}
-                        className="w-full text-sm p-3 pl-10 border border-slate-200 rounded-xl focus:border-blue-500 hover:border-slate-300 outline-none bg-white font-bold text-slate-700 shadow-sm transition-all"
-                      />
-                      <Calendar 
-                        size={16} 
-                        className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" 
-                      />
-                    </div>
+                    <AnimatedDatePicker
+                      value={selectedDate}
+                      onChange={setSelectedDate}
+                      triggerClassName="border-slate-200 hover:border-slate-300"
+                    />
                   </div>
                 </div>
 
@@ -1421,7 +1529,7 @@ export const ScoreUploader: React.FC<ScoreUploaderProps> = ({
                                   <span className="italic text-slate-400">Missing</span>
                                 )}
                               </td>
-                              <td className="p-3 font-bold text-slate-900">{row.csvFullName}</td>
+                              <td className="p-3 font-bold text-slate-900 uppercase">{row.csvFullName?.toUpperCase()}</td>
                               <td className="p-3">
                                 <span className="font-mono font-bold text-slate-800">
                                   {row.rawEarnedPoints} / {row.rawPossiblePoints}
@@ -1435,7 +1543,7 @@ export const ScoreUploader: React.FC<ScoreUploaderProps> = ({
                               <td className="p-3">
                                 {row.matchedUser ? (
                                   <div>
-                                    <p className="font-bold text-slate-900">{row.matchedUserName}</p>
+                                    <p className="font-bold text-slate-900 uppercase">{row.matchedUserName?.toUpperCase()}</p>
                                     <p className="text-[10px] font-mono text-slate-400">
                                       ID: {row.matchedUser.seq_id || row.matchedUser.id_number || row.matchedUser.student_id || row.matchedUserId}
                                     </p>
@@ -1542,13 +1650,9 @@ export const ScoreUploader: React.FC<ScoreUploaderProps> = ({
               />
             </div>
 
-            <div className="flex-1 overflow-y-auto divide-y divide-slate-100 border border-slate-100 rounded-xl custom-scrollbar">
-              {allUsers
+            <div className="flex-1 overflow-y-auto divide-y divide-slate-100 border border-slate-100 rounded-xl custom-scrollbar" style={{ fontFamily: "'Google Sans', 'Plus Jakarta Sans', 'Inter', sans-serif" }}>
+              {uniqueAllReviewees
                 .filter(u => {
-                  const role = String(u.role || '').toLowerCase();
-                  if (role === 'admin' || role === 'staff') return false;
-                  if (u.is_archived || u.isDeleted || u.deleted) return false;
-
                   if (!manualUserSearch) return true;
                   const qNorm = normalizeNameForComparison(manualUserSearch);
                   const canonical = getCanonicalFullName(u);
@@ -1572,8 +1676,8 @@ export const ScoreUploader: React.FC<ScoreUploaderProps> = ({
                     onClick={() => handleApplyManualMatch(manualMatchRowIdx, user)}
                   >
                     <div>
-                      <p className="font-bold text-xs text-slate-900">
-                        {canonical.displayName}
+                      <p className="font-bold text-xs text-slate-900 uppercase">
+                        {canonical.displayName.toUpperCase()}
                       </p>
                       <p className="text-[10px] text-slate-500 font-mono">
                         ID: {user.seq_id || user.id_number || user.student_id || 'N/A'} • {user.school_name || user.review_branch || 'CKCM'}

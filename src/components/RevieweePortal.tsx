@@ -47,6 +47,9 @@ export function RevieweePortal({ data, onLogout }: { data: RevieweeData, onLogou
   const [revieweeData, setRevieweeData] = useState(data);
   const [activeTab, setActiveTab] = useState(() => {
     const normalizedPath = decodeURIComponent(window.location.pathname).toLowerCase();
+    if (normalizedPath.includes('/reviewee/my-scores')) {
+      return 'my-scores';
+    }
     if (normalizedPath.includes('/reviewee/scores') || normalizedPath.includes('/scores')) {
       return 'scores';
     }
@@ -59,17 +62,22 @@ export function RevieweePortal({ data, onLogout }: { data: RevieweeData, onLogou
   const { notifications } = useNotifications(firestoreDb, data.uid || "");
   
   const unreadCount = useMemo(() => notifications.filter(n => !n.isRead).length, [notifications]);
-  
+
   const handleTabChange = (tab: string) => {
     setSelectedSubjectBreakdown(null);
-    setActiveTab(tab);
-    localStorage.setItem('reviewee_active_tab', tab);
+    
+    // Map 'daily' and 'eval' to 'my-scores'
+    const targetTab = (tab === 'daily' || tab === 'eval') ? 'my-scores' : tab;
+    
+    setActiveTab(targetTab);
+    localStorage.setItem('reviewee_active_tab', targetTab);
+    
     let url = '/reviewee/dashboard';
-    if (tab === 'my-scores') {
+    if (targetTab === 'my-scores') {
       url = '/reviewee/my-scores';
-    } else if (tab === 'scores') {
+    } else if (targetTab === 'scores') {
       url = '/reviewee/scores';
-    } else if (tab === 'profile') {
+    } else if (targetTab === 'profile') {
       url = '/reviewee/profile';
     }
     window.history.pushState({}, '', url);

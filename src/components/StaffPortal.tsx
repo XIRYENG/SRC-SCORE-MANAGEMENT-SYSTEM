@@ -71,7 +71,7 @@ const FOOTER_ITEMS = [
 interface StaffPortalProps {
   data: RevieweeData;
   onLogout: () => void;
-  onOpenSyncModal: (section?: 'main' | 'search' | 'duplicates' | 'mapping', tab?: 'details' | 'scores' | 'import_scores' | 'archived' | 'leaderboard' | 'activity') => void;
+  onOpenSyncModal: (section?: 'main' | 'search' | 'duplicates' | 'mapping', tab?: 'details' | 'scores' | 'import_scores' | 'archived' | 'leaderboard' | 'activity', folderId?: string) => void;
   syncProps?: any;
 }
 
@@ -87,6 +87,9 @@ export function StaffPortal({ data, onLogout, onOpenSyncModal, syncProps }: Staf
     }
     if (normalizedPath.includes('/staff/reviewees') || normalizedPath.includes('/reviewees')) {
       return 'reviewees';
+    }
+    if (normalizedPath.includes('/staff/upload-scores/csv')) {
+      return 'import-scores-tab';
     }
     if (normalizedPath.includes('/staff/upload-scores') || normalizedPath.includes('/upload-scores')) {
       return 'upload-scores';
@@ -142,6 +145,8 @@ export function StaffPortal({ data, onLogout, onOpenSyncModal, syncProps }: Staf
     );
     return () => unsub();
   }, [db]);
+
+  const [localScoreFolderId, setLocalScoreFolderId] = useState<string | undefined>(undefined);
 
   const handleAreaCardClick = (subjectLabel: string, subjectKey: SubjectArea) => {
     const categories: GradeCategoryKey[] = ["preboard", "pretest", "posttest", "quiz", "dailyEvaluation", "removal", "diagnostic"];
@@ -211,6 +216,8 @@ export function StaffPortal({ data, onLogout, onOpenSyncModal, syncProps }: Staf
       url = '/staff/reviewees';
     } else if (tabKey === 'upload-scores') {
       url = '/staff/upload-scores';
+    } else if (tabKey === 'import-scores-tab') {
+      url = '/staff/upload-scores/csv';
     } else if (tabKey === 'manual-score') {
       url = '/staff/manual-score';
     } else if (tabKey === 'reports') {
@@ -250,6 +257,7 @@ export function StaffPortal({ data, onLogout, onOpenSyncModal, syncProps }: Staf
     let tab = 'details';
     if (activeTab === 'reviewees') { tab = 'details'; }
     if (activeTab === 'manual-score' || activeTab === 'upload-scores') { tab = 'scores'; }
+    if (activeTab === 'import-scores-tab') { tab = 'import_scores'; }
     if (activeTab === 'categories') { tab = 'details'; }
     if (activeTab === 'leaderboard') { tab = 'leaderboard'; }
     if (activeTab === 'reports') { tab = 'details'; }
@@ -425,21 +433,32 @@ export function StaffPortal({ data, onLogout, onOpenSyncModal, syncProps }: Staf
 
       {activeTab === 'upload-scores' && (
         <ScoreManagementWrapper 
-          onOpenSyncModal={onOpenSyncModal}
+          onOpenSyncModal={(section, tab, folderId) => {
+            if (tab === 'import_scores') {
+              if (folderId) {
+                setLocalScoreFolderId(folderId);
+              }
+              handleTabSelect('import-scores-tab');
+            } else {
+              onOpenSyncModal(section, tab, folderId);
+            }
+          }}
           currentUser={userData}
         />
       )}
 
-      <div className={activeTab !== 'dashboard' && activeTab !== 'profile' && activeTab !== 'users' && activeTab !== 'upload-scores' ? "block" : "hidden"}>
+      <div className={activeTab !== 'dashboard' && activeTab !== 'profile' && activeTab !== 'users' && activeTab !== 'upload-scores' && activeTab !== 'import-scores-tab' ? "block" : "hidden"}>
         <SyncModal 
           {...(syncProps || {})} 
           isOpen={true} 
           embeddedMode={true} 
+          scoreFolderId={localScoreFolderId || syncProps?.scoreFolderId}
           initialSection={getSyncModalProps().initialSection} 
           initialTab={getSyncModalProps().initialTab} 
           onSubTabChange={(tab) => {
             if (tab === 'details') setActiveTab('reviewees');
             else if (tab === 'scores') setActiveTab('upload-scores');
+            else if (tab === 'import_scores') setActiveTab('import-scores-tab');
             else if (tab === 'leaderboard') setActiveTab('leaderboard');
           }}
           onSectionChange={(section) => {

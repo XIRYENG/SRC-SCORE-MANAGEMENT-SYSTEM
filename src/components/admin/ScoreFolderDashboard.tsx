@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Folder, FolderPlus, MoreVertical, Edit, Archive, Eye, EyeOff, Calendar, Users, Upload, CheckCircle } from 'lucide-react';
+import { AnimatedDatePicker } from '../ui/animated-date-picker';
 import { ScoreFolder, ScoreFolderType, RevieweeData } from '../../types';
 import { useScoreFolders } from '../../hooks/useScoreFolders';
 import { firestoreDb } from '../../utils/firebaseClient';
@@ -173,9 +174,14 @@ function FolderCard({ folder, onOpen, currentUser, onEdit }: { folder: ScoreFold
       </div>
 
       <div className="mb-4 relative z-10">
-        <h3 className="text-lg font-bold text-slate-900 tracking-tight">{folder.name}</h3>
+        <div className="flex items-center justify-between gap-2 mb-1.5">
+          <h3 className="text-lg font-bold text-slate-900 tracking-tight">{folder.name}</h3>
+          <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-teal-50 text-teal-700 border border-teal-100">
+            {folder.type ? folder.type.replace(/_/g, ' ') : 'Custom'}
+          </span>
+        </div>
         {folder.description && (
-          <p className="text-sm text-slate-500 mt-1 line-clamp-2">{folder.description}</p>
+          <p className="text-sm text-slate-500 line-clamp-2">{folder.description}</p>
         )}
       </div>
 
@@ -294,7 +300,7 @@ function FolderModal({ onClose, currentUser, initialFolder }: { onClose: () => v
                 <label className="block text-sm font-bold text-slate-700 mb-1">Type</label>
                 <select 
                   value={formData.type}
-                  onChange={e => setFormData({...formData, type: e.target.value})}
+                  onChange={e => setFormData({...formData, type: e.target.value as any})}
                   className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500 transition-shadow appearance-none"
                 >
                   <option value="phase_1">Phase 1</option>
@@ -308,12 +314,9 @@ function FolderModal({ onClose, currentUser, initialFolder }: { onClose: () => v
               </div>
               <div>
                 <label className="block text-sm font-bold text-slate-700 mb-1">Start Date</label>
-                <input 
-                  required
-                  type="date" 
+                <AnimatedDatePicker 
                   value={formData.startDate}
-                  onChange={e => setFormData({...formData, startDate: e.target.value})}
-                  className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500 transition-shadow"
+                  onChange={val => setFormData({...formData, startDate: val})}
                 />
               </div>
             </div>
@@ -333,7 +336,7 @@ function FolderModal({ onClose, currentUser, initialFolder }: { onClose: () => v
                 <label className="block text-sm font-bold text-slate-700 mb-1">Publication Status</label>
                 <select 
                   value={formData.publicationStatus}
-                  onChange={e => setFormData({...formData, publicationStatus: e.target.value})}
+                  onChange={e => setFormData({...formData, publicationStatus: e.target.value as any})}
                   className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500 transition-shadow appearance-none"
                 >
                   <option value="published">Published</option>

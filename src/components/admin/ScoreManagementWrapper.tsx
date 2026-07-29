@@ -5,7 +5,7 @@ import { ScoreFolder, RevieweeData } from '../../types';
 import { ChevronLeft } from 'lucide-react';
 
 type ScoreManagementWrapperProps = {
-  onOpenSyncModal?: (section?: any, tab?: any) => void;
+  onOpenSyncModal?: (section?: any, tab?: any, folderId?: string) => void;
   currentUser?: RevieweeData | null;
 };
 

@@ -30,9 +30,11 @@ import {
   RowStatus,
   MatchMethod
 } from '../lib/scoreMatcher';
-import { updateDoc, doc, serverTimestamp, collection, setDoc, writeBatch } from 'firebase/firestore';
+import { updateDoc, doc, serverTimestamp, collection, setDoc, writeBatch, getDocs } from 'firebase/firestore';
+import { getScoreFieldName, normalizeScoreCategory } from '../utils/scoreFieldResolver';
 import { getCanonicalFullName, normalizeNameForComparison } from '../utils/nameNormalization';
 import { firestoreDb } from '../utils/firebaseClient';
+import { AnimatedDatePicker } from './ui/animated-date-picker';
 
 type PreviewStatusFilter = 'ALL' | 'READY' | 'UNMATCHED' | 'CONFLICTS' | 'DUPLICATES' | 'WITHOUT_SCORE' | 'INVALID' | 'EXISTING_SCORE';
 
@@ -60,6 +62,7 @@ export interface ScoreImporterProps {
   currentUser?: any;
   backgroundTasks: any[];
   setBackgroundTasks: React.Dispatch<React.SetStateAction<any[]>>;
+  scoreFolderId?: string;
 }
 
 type PreviewTab = 'all' | 'ready' | 'conflicts' | 'unmatched' | 'existing';
@@ -286,7 +289,8 @@ export const ScoreImporter: React.FC<ScoreImporterProps> = ({
   fetchAllUsers,
   currentUser,
   backgroundTasks,
-  setBackgroundTasks
+  setBackgroundTasks,
+  scoreFolderId
 }) => {
   // File state
   const [file, setFile] = useState<File | null>(null);
@@ -389,14 +393,29 @@ export const ScoreImporter: React.FC<ScoreImporterProps> = ({
     return Array.from(new Set(batches)).sort();
   }, [allUsers]);
 
-  // Eligible Registered Reviewees filtered context
-  const eligibleReviewees = useMemo(() => {
-    return allUsers.filter(u => {
-      if (u.is_archived || u.isDeleted || u.deleted) return false;
-      const role = getUserRole(u);
-      if (role === 'Admin' || role === 'Staff' || role === 'admin' || role === 'staff') return false;
-      if (!isReviewee(u)) return false;
+  // Memoized unique list of all active reviewees for the manual match modal
+  const uniqueAllReviewees = useMemo(() => {
+    const unique = new Map<string, any>();
+    allUsers.forEach(u => {
+      // Basic filtering: skip admins/staff and deleted/archived accounts
+      const role = String(u.role || u.user_role || u.userRole || u.Role || '').trim().toLowerCase();
+      if (role === 'admin' || role === 'staff') return;
+      if (u.is_archived || u.isDeleted || u.deleted || u.is_deleted) return;
+      
+      // Ensure we have a valid reviewee (usually has an ID number or specific role)
+      if (role !== 'reviewee' && role !== 'student' && !u.id_number && !u.seq_id) return;
 
+      const key = u.uid || u.doc_id || u.id;
+      if (key && !unique.has(key)) {
+        unique.set(key, u);
+      }
+    });
+    return Array.from(unique.values());
+  }, [allUsers]);
+
+  // Eligible Registered Reviewees filtered context for the "Reviewees Without Score" list
+  const eligibleReviewees = useMemo(() => {
+    return uniqueAllReviewees.filter(u => {
       // School filter
       if (filterSchoolPreview !== 'ALL') {
         const uSchool = String(u.school_name || u.schoolName || u.school || '').trim().toUpperCase();
@@ -415,7 +434,7 @@ export const ScoreImporter: React.FC<ScoreImporterProps> = ({
 
       return true;
     });
-  }, [allUsers, filterSchoolPreview, filterBranchPreview, filterBatchPreview]);
+  }, [uniqueAllReviewees, filterSchoolPreview, filterBranchPreview, filterBatchPreview]);
 
   // Dynamic Matching Summary Selector
   const matchingSummary = useMemo(() => {
@@ -801,6 +820,52 @@ export const ScoreImporter: React.FC<ScoreImporterProps> = ({
     const taskId = createBackgroundTask(`Importing ${validRows.length} Scores (${selectedSubject})`);
 
     try {
+      if (!firestoreDb) throw new Error("Firestore database is not initialized.");
+
+      // 1. Fetch existing score_events to find or create a column for this imported session
+      const eventsSnap = await getDocs(collection(firestoreDb, 'score_events'));
+      const events = eventsSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+
+      const normCat = normalizeScoreCategory(selectedCategory);
+      const normSubj = selectedSubject.toLowerCase();
+      const normDate = selectedDate;
+
+      let existingEvent = events.find(evt => {
+        const isSameCat = normalizeScoreCategory(evt.category) === normCat;
+        const isSameSubj = String(evt.subjectId || evt.subjectName || evt.majorAreaId || '').toLowerCase().trim() === normSubj;
+        const isSameDate = evt.evaluationDate === normDate;
+        return isSameCat && isSameSubj && isSameDate;
+      });
+
+      let eventId = '';
+      let totalItems = 100;
+      const firstReadyRow = validRows.find(r => r.possiblePoints !== null && r.possiblePoints > 0);
+      if (firstReadyRow) {
+        totalItems = Number(firstReadyRow.possiblePoints);
+      }
+
+      if (existingEvent) {
+        eventId = existingEvent.id;
+        totalItems = existingEvent.totalItems || totalItems;
+      } else {
+        const eventRef = doc(collection(firestoreDb, "score_events"));
+        eventId = eventRef.id;
+        await setDoc(eventRef, {
+          scoreFolderId: scoreFolderId || "main",
+          category: selectedCategory,
+          majorAreaId: selectedSubject.toLowerCase(),
+          majorAreaName: selectedSubject,
+          subjectId: selectedSubject.toLowerCase(),
+          subjectName: selectedSubject,
+          evaluationDate: selectedDate,
+          totalItems: totalItems,
+          publicationStatus: "published",
+          createdBy: currentUser?.uid || "admin",
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+      }
+
       const subjectKey = selectedSubject.toLowerCase();
       const categoryKey = selectedCategory.toLowerCase().replace(/\s+/g, '');
       let fieldName = '';
@@ -826,25 +891,60 @@ export const ScoreImporter: React.FC<ScoreImporterProps> = ({
 
           if (!userDocId || typeof userDocId !== 'string' || userDocId === 'unmatched' || !user) continue;
 
-          const currentVal = user[fieldName];
+          const score = Number(row.earnedPoints || 0);
+          const possible = Number(row.possiblePoints || totalItems || 100);
+
+          const existingRecord = user.assessmentRecords?.[eventId];
+          const currentVal = existingRecord?.score !== undefined ? existingRecord.score : user[fieldName];
+
           if (currentVal !== undefined && currentVal !== null) {
             if (existingScorePolicy === 'skip') {
               continue;
             } else if (existingScorePolicy === 'keep_highest') {
-              if (typeof currentVal === 'number' && (row.earnedPoints || 0) <= currentVal) {
+              if (typeof currentVal === 'number' && score <= currentVal) {
                 continue;
               }
             }
           }
 
+          const normalizedCategoryKey = normalizeScoreCategory(selectedCategory);
+          const scoreRecordKey = `${userDocId}_${normalizedCategoryKey}_${selectedDate}`;
+
           const updatePayload: any = {
             ...(row.updateData || {}),
-            [fieldName]: row.earnedPoints,
+            [fieldName]: score,
+            [`${fieldName}_total`]: possible,
+            [`scoresByDate.${scoreRecordKey}`]: {
+              scoreEventId: eventId,
+              category: selectedCategory,
+              categoryKey: normalizedCategoryKey,
+              score: score,
+              rawScore: score,
+              earnedPoints: score,
+              possiblePoints: possible,
+              percentage: (score / possible) * 100,
+              date: selectedDate,
+              scoreFolderId: scoreFolderId || "main",
+              source: 'score_import',
+              remarks: 'Imported via CSV',
+              updatedAt: new Date().toISOString()
+            },
+            [`assessmentRecords.${eventId}`]: {
+              scoreEventId: eventId,
+              category: selectedCategory,
+              date: selectedDate,
+              score: score,
+              totalScore: possible,
+              subject: selectedSubject,
+              subjectCode: selectedSubject.toLowerCase(),
+              scoreFolderId: scoreFolderId || "main",
+              publicationStatus: "published",
+              updatedAt: new Date().toISOString()
+            },
             last_score_update: serverTimestamp(),
             updated_at: new Date().toISOString()
           };
 
-          if (!firestoreDb) throw new Error("Firestore database is not initialized.");
           const userRef = doc(firestoreDb, 'users', userDocId);
           await updateDoc(userRef, updatePayload);
 
@@ -1206,15 +1306,11 @@ export const ScoreImporter: React.FC<ScoreImporterProps> = ({
                 <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">
                   Exam Date
                 </label>
-                <div className="relative">
-                  <input
-                    type="date"
-                    value={selectedDate}
-                    onChange={(e) => handleSettingsChange(selectedSubject, selectedCategory, e.target.value)}
-                    className="w-full text-xs p-3 pl-9 border border-slate-200 rounded-xl hover:border-blue-400 outline-none bg-white font-bold text-slate-800 transition-all"
-                  />
-                  <Calendar size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                </div>
+                <AnimatedDatePicker
+                  value={selectedDate}
+                  onChange={(val) => handleSettingsChange(selectedSubject, selectedCategory, val)}
+                  triggerClassName="border-slate-200 hover:border-blue-400"
+                />
               </div>
 
               {/* Existing Score Policy */}
@@ -1423,7 +1519,7 @@ export const ScoreImporter: React.FC<ScoreImporterProps> = ({
                               <span className="italic text-slate-400">Missing</span>
                             )}
                           </td>
-                          <td className="p-3 font-bold text-slate-900">{row.csvFullName}</td>
+                          <td className="p-3 font-bold text-slate-900 uppercase">{row.csvFullName?.toUpperCase()}</td>
                           <td className="p-3">
                             <span className="font-mono font-bold text-slate-900">
                               {row.rawEarnedPoints} / {row.rawPossiblePoints}
@@ -1437,7 +1533,7 @@ export const ScoreImporter: React.FC<ScoreImporterProps> = ({
                           <td className="p-3">
                             {row.matchedUser ? (
                               <div>
-                                <p className="font-bold text-slate-900">{row.matchedUserName}</p>
+                                <p className="font-bold text-slate-900 uppercase">{row.matchedUserName?.toUpperCase()}</p>
                                 <p className="text-[10px] font-mono text-slate-400">
                                   ID: {row.matchedUser.seq_id || row.matchedUser.id_number || row.matchedUserId}
                                 </p>
@@ -1509,13 +1605,9 @@ export const ScoreImporter: React.FC<ScoreImporterProps> = ({
               </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto divide-y divide-slate-100 border border-slate-100 rounded-2xl max-h-60">
-              {allUsers
+            <div className="flex-1 overflow-y-auto divide-y divide-slate-100 border border-slate-100 rounded-2xl max-h-60" style={{ fontFamily: "'Google Sans', 'Plus Jakarta Sans', 'Inter', sans-serif" }}>
+              {uniqueAllReviewees
                 .filter(u => {
-                  const role = String(u.role || '').toLowerCase();
-                  if (role === 'admin' || role === 'staff') return false;
-                  if (u.is_archived || u.isDeleted || u.deleted) return false;
-
                   if (!manualUserSearch.trim()) return true;
                   const qNorm = normalizeNameForComparison(manualUserSearch);
                   const canonical = getCanonicalFullName(u);
@@ -1535,8 +1627,8 @@ export const ScoreImporter: React.FC<ScoreImporterProps> = ({
                   return (
                   <div key={user.doc_id || user.uid ? `${user.doc_id || user.uid}_${idx}` : `u_${idx}`} className="p-3 hover:bg-slate-50 flex items-center justify-between transition-colors">
                     <div>
-                      <p className="font-bold text-xs text-slate-900">
-                        {canonical.displayName}
+                      <p className="font-bold text-xs text-slate-900 uppercase">
+                        {canonical.displayName.toUpperCase()}
                       </p>
                       <p className="text-[10px] text-slate-500 font-mono">
                         ID: {user.seq_id || user.id_number || user.student_id || 'N/A'} • {user.school || user.school_name || 'No School'}

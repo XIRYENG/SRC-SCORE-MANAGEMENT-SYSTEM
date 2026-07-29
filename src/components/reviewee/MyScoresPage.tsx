@@ -7,6 +7,7 @@ import { calculateAggregatedAreaRating } from '../../lib/scoreCalculations';
 import { normalizeScoreCategory, normalizeScoreSubject } from '../../utils/scoreFieldResolver';
 import { ScoreRecord } from '../../utils/scoreParser';
 import { getSubjectsByArea, MajorAreaCode, MAJOR_AREAS } from '../../config/criminologyCurriculum';
+import { motion, AnimatePresence } from 'motion/react';
 
 export function MyScoresPage({ revieweeData, scores }: { revieweeData: RevieweeData; scores: ScoreRecord[] }) {
   const { folders } = useScoreFolders();
@@ -38,7 +39,8 @@ export function MyScoresPage({ revieweeData, scores }: { revieweeData: RevieweeD
     const catRecords = filteredScores.filter(r => normalizeScoreCategory(r.category || '') === 'dailyevaluation');
 
     // Also look at revieweeData.assessmentRecords & scoresByDate
-    const assessmentRecords = Object.values(revieweeData?.assessmentRecords || {});
+    const assessmentRecords = Object.values(revieweeData?.assessmentRecords || {})
+      .filter((r: any) => r && r.publicationStatus !== 'hidden');
     const scoresByDateEntries = Object.values((revieweeData as any)?.scoresByDate || {});
 
     // Collect dates

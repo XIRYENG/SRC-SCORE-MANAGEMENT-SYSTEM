@@ -80,11 +80,11 @@ export const UnmatchedRecordsModal: React.FC<UnmatchedRecordsModalProps> = ({
               </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            <div className="flex-1 overflow-y-auto p-4 space-y-4" style={{ fontFamily: "'Google Sans', 'Plus Jakarta Sans', 'Inter', sans-serif" }}>
               {filteredEntries.map((entry, i) => (
                 <div key={i} className="p-4 border border-slate-200 rounded-lg bg-slate-50">
                   <div className="flex justify-between mb-2">
-                    <span className="font-bold text-slate-900">{entry.name}</span>
+                    <span className="font-bold text-slate-900 uppercase">{entry.name.toUpperCase()}</span>
                     <span className="text-xs font-mono bg-slate-200 px-2 py-0.5 rounded">ID: {entry.id || 'N/A'}</span>
                   </div>
                   
@@ -97,21 +97,21 @@ export const UnmatchedRecordsModal: React.FC<UnmatchedRecordsModalProps> = ({
                       <button 
                         key={match.doc_id ? `${match.doc_id}_${idx}` : `match_${idx}`}
                         onClick={() => onManualSync(i, entry, match.doc_id)}
-                        className="text-left text-xs p-2 rounded bg-blue-50 text-blue-800 border border-blue-100 hover:bg-blue-100"
+                        className="text-left text-xs p-2 rounded bg-blue-50 text-blue-800 border border-blue-100 hover:bg-blue-100 uppercase"
                       >
-                         {match.last_name}, {match.first_name} ({match.seq_id || 'N/A'})
+                         {(match.last_name || '').toUpperCase()}, {(match.first_name || '').toUpperCase()} ({match.seq_id || 'N/A'})
                       </button>
                     ))}
                     
                     <select
-                      className="flex-1 text-xs p-2 border border-slate-300 rounded-md bg-white"
+                      className="flex-1 text-xs p-2 border border-slate-300 rounded-md bg-white uppercase"
                       value={manualSyncTargets[i] || ''}
                       onChange={(e) => setManualSyncTargets(prev => ({ ...prev, [i]: e.target.value }))}
                     >
-                      <option value="">-- Select from database --</option>
+                      <option value="" className="normal-case">-- Select from database --</option>
                       {missingUsersForSelectedScore.map((u, idx) => (
                         <option key={u.doc_id ? `${u.doc_id}_${idx}` : `opt_${idx}`} value={u.doc_id}>
-                          {u.last_name}, {u.first_name} ({u.seq_id || 'N/A'})
+                          {(u.last_name || '').toUpperCase()}, {(u.first_name || '').toUpperCase()} ({u.seq_id || 'N/A'})
                         </option>
                       ))}
                     </select>

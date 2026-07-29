@@ -32,7 +32,7 @@ export function BoardSubjectAreasSection({
       <div className="mb-6 flex items-start justify-between gap-4">
         <div>
           <h2 className="text-2xl font-bold text-slate-950 dark:text-white">
-            Board Subject Areas
+            Board Major Area
           </h2>
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
             Click any area to view full category breakdown

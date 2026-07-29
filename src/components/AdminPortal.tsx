@@ -83,7 +83,7 @@ const FOOTER_ITEMS = [
 interface AdminPortalProps {
   data: RevieweeData;
   onLogout: () => void;
-  onOpenSyncModal: (section?: 'main' | 'search' | 'duplicates' | 'mapping', tab?: 'details' | 'scores' | 'import_scores' | 'archived' | 'leaderboard' | 'activity') => void;
+  onOpenSyncModal: (section?: 'main' | 'search' | 'duplicates' | 'mapping', tab?: 'details' | 'scores' | 'import_scores' | 'archived' | 'leaderboard' | 'activity', folderId?: string) => void;
   syncProps?: any;
 }
 
@@ -107,6 +107,9 @@ export function AdminPortal({ data, onLogout, onOpenSyncModal, syncProps }: Admi
     }
     if (normalizedPath.includes('/admin/reviewees') || normalizedPath.includes('/search-database/details')) {
       return 'reviewees';
+    }
+    if (normalizedPath.includes('/admin/upload-scores/csv')) {
+      return 'upload-scores';
     }
     if (normalizedPath.includes('/admin/scores') || normalizedPath.includes('/admin/upload-scores') || normalizedPath.includes('/search-database/scores') || normalizedPath.includes('/score-management') || normalizedPath.includes('/upload-scores')) {
       return 'score-management';
@@ -225,6 +228,8 @@ export function AdminPortal({ data, onLogout, onOpenSyncModal, syncProps }: Admi
       setLoadingLogs(false);
     }
   }, [data?.uid, data?.seqId, data?.role]);
+
+  const [localScoreFolderId, setLocalScoreFolderId] = useState<string | undefined>(undefined);
 
   const activeUsersList = useMemo(() => {
     return allUsers.filter((u) => {
@@ -375,7 +380,7 @@ export function AdminPortal({ data, onLogout, onOpenSyncModal, syncProps }: Admi
     } else if (tabKey === 'score-management') {
       url = '/admin/scores';
     } else if (tabKey === 'upload-scores') {
-      url = '/admin/upload-scores';
+      url = '/admin/upload-scores/csv';
     } else if (tabKey === 'archives') {
       url = '/admin/archives';
     } else if (tabKey === 'leaderboard') {
@@ -403,14 +408,17 @@ export function AdminPortal({ data, onLogout, onOpenSyncModal, syncProps }: Admi
 
   const getSyncModalProps = () => {
     let section: 'main' | 'search' | 'duplicates' | 'mapping' = 'search';
-    let tab: 'details' | 'scores' | 'archived' | 'leaderboard' | 'activity' = 'details';
+    let tab: 'details' | 'scores' | 'import_scores' | 'archived' | 'leaderboard' | 'activity' = 'details';
     
     if (activeTab === 'reviewees') {
       section = 'search';
       tab = 'details';
-    } else if (activeTab === 'score-management' || activeTab === 'upload-scores') {
+    } else if (activeTab === 'score-management') {
       section = 'search';
       tab = 'scores';
+    } else if (activeTab === 'upload-scores') {
+      section = 'search';
+      tab = 'import_scores';
     } else if (activeTab === 'archives') {
       section = 'search';
       tab = 'archived';
@@ -666,7 +674,17 @@ export function AdminPortal({ data, onLogout, onOpenSyncModal, syncProps }: Admi
 
       {activeTab === 'score-management' && (
         <ScoreManagementWrapper 
-          onOpenSyncModal={onOpenSyncModal}
+          onOpenSyncModal={(section, tab, folderId) => {
+            if (tab === 'import_scores') {
+              // Store folderId if we are navigating to upload-scores
+              if (folderId) {
+                setLocalScoreFolderId(folderId);
+              }
+              handleTabSelect('upload-scores');
+            } else {
+              onOpenSyncModal(section, tab, folderId);
+            }
+          }}
           currentUser={userData}
         />
       )}
@@ -676,11 +694,13 @@ export function AdminPortal({ data, onLogout, onOpenSyncModal, syncProps }: Admi
           {...(syncProps || {})} 
           isOpen={true} 
           embeddedMode={true} 
+          scoreFolderId={localScoreFolderId || syncProps?.scoreFolderId}
           initialSection={getSyncModalProps().initialSection} 
           initialTab={getSyncModalProps().initialTab} 
           onSubTabChange={(tab) => {
             if (tab === 'details') handleTabSelect('reviewees');
             else if (tab === 'scores') handleTabSelect('score-management');
+            else if (tab === 'import_scores') handleTabSelect('upload-scores');
             else if (tab === 'archived') handleTabSelect('archives');
             else if (tab === 'leaderboard') handleTabSelect('leaderboard');
             else if (tab === 'activity') handleTabSelect('audit-log');

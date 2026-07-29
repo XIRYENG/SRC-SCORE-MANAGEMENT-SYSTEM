@@ -1,8 +1,9 @@
 import React, { useMemo, useState } from 'react';
-import { FileText, TrendingUp, Award, CheckCircle2, Check, User } from 'lucide-react';
-import { RevieweeData } from '../../types';
+import { FileText, TrendingUp, Award, CheckCircle2, Check, User, Folder } from 'lucide-react';
+import { RevieweeData, ScoreFolder } from '../../types';
 import { ScoreRecord, parseScores } from '../../utils/scoreParser';
 import { normalizeScoreCategory, normalizeScoreSubject } from '../../utils/scoreFieldResolver';
+import { useScoreFolders } from '../../hooks/useScoreFolders';
 
 const SUBJECTS_BY_AREA: Record<string, { code: string; title: string }[]> = {
   "CLJ": [
@@ -61,6 +62,14 @@ const SUBJECTS_BY_AREA: Record<string, { code: string; title: string }[]> = {
 const MAJOR_AREAS = ["CLJ", "LEA", "CDI", "FS", "CRIM", "CA"];
 const CATEGORIES = ["Diagnostic", "Pretest", "Posttest", "Quiz", "Daily Evaluation", "Removal", "Preboard"];
 
+function formatFolderType(type: string): string {
+  if (!type) return 'N/A';
+  return type
+    .split('_')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
+
 function getScoreColor(rating: number) {
   if (rating >= 80) return { text: "teal-600", bg: "teal-50", label: "Very Good" };
   if (rating >= 70) return { text: "emerald-600", bg: "emerald-50", label: "Above Average" };
@@ -74,38 +83,55 @@ interface Props {
 }
 
 export default function RevieweeScoresDashboard({ currentUser }: Props) {
+  const { folders } = useScoreFolders();
+  const publishedFolders = useMemo(() => folders.filter(f => f.publicationStatus === 'published' && !f.isArchived), [folders]);
+  const [selectedFolder, setSelectedFolder] = useState<ScoreFolder | null>(null);
+  
+  // Set default folder when folders load
+  React.useEffect(() => {
+    if (publishedFolders.length > 0 && !selectedFolder) {
+      setSelectedFolder(publishedFolders[0]);
+    }
+  }, [publishedFolders, selectedFolder]);
+
   const [selectedMajorArea, setSelectedMajorArea] = useState("CLJ");
   const [selectedCategory, setSelectedCategory] = useState("Daily Evaluation");
 
   const records = useMemo(() => parseScores(currentUser), [currentUser]);
 
+  // Filter records by selected folder
+  const filteredRecords = useMemo(() => {
+    if (!selectedFolder) return [];
+    return records.filter(r => r.scoreFolderId === selectedFolder.id);
+  }, [records, selectedFolder]);
+
   // Aggregate Top-Level Metrics
-  const totalEarnedOverall = records.reduce((acc, r) => acc + (Number(r.score) || 0), 0);
-  const totalPossibleOverall = records.reduce((acc, r) => acc + (Number(r.totalItems) || 100), 0);
+  const totalEarnedOverall = filteredRecords.reduce((acc, r) => acc + (Number(r.score) || 0), 0);
+  const totalPossibleOverall = filteredRecords.reduce((acc, r) => acc + (Number(r.totalItems) || 100), 0);
   const overallRating = totalPossibleOverall > 0 ? (totalEarnedOverall / totalPossibleOverall) * 100 : 0;
   
-  const completedExams = new Set(records.map(r => `${r.date}_${r.category}`)).size;
+  const completedExams = new Set(filteredRecords.map(r => `${r.date}_${r.category}`)).size;
 
   // Major Area Stats
   const majorAreaStats = useMemo(() => {
     return MAJOR_AREAS.map(area => {
-      const areaRecords = records.filter(r => normalizeScoreSubject(r.area).startsWith(normalizeScoreSubject(area)));
+      const areaRecords = filteredRecords.filter(r => normalizeScoreSubject(r.area).startsWith(normalizeScoreSubject(area)));
       const earned = areaRecords.reduce((acc, r) => acc + (Number(r.score) || 0), 0);
       const possible = areaRecords.reduce((acc, r) => acc + (Number(r.totalItems) || 100), 0);
       const rating = possible > 0 ? (earned / possible) * 100 : 0;
       return { area, rating, hasRecords: possible > 0 };
     });
-  }, [records]);
+  }, [filteredRecords]);
 
   const highestArea = [...majorAreaStats].filter(s => s.hasRecords).sort((a, b) => b.rating - a.rating)[0];
 
   // Specific Table Data
   const currentCategoryRecords = useMemo(() => {
-    return records.filter(r => 
+    return filteredRecords.filter(r => 
       normalizeScoreCategory(r.category) === normalizeScoreCategory(selectedCategory) &&
       normalizeScoreSubject(r.area).startsWith(normalizeScoreSubject(selectedMajorArea))
     );
-  }, [records, selectedCategory, selectedMajorArea]);
+  }, [filteredRecords, selectedCategory, selectedMajorArea]);
 
   const uniqueDates = useMemo(() => {
     const dates = new Set<string>();
@@ -118,7 +144,12 @@ export default function RevieweeScoresDashboard({ currentUser }: Props) {
   const subjects = SUBJECTS_BY_AREA[selectedMajorArea] || [];
 
   const tableData = subjects.map(subj => {
-    const subjRecords = currentCategoryRecords.filter(r => normalizeScoreSubject(r.area) === normalizeScoreSubject(subj.code));
+    const subjRecords = currentCategoryRecords.filter(r => {
+      const scoreSubj = normalizeScoreSubject(r.area);
+      const targetSubj = normalizeScoreSubject(subj.code);
+      return scoreSubj === targetSubj;
+    });
+
     let rowEarned = 0;
     let rowPossible = 0;
     const dateScores: Record<string, { earned: number, possible: number }> = {};
@@ -142,15 +173,48 @@ export default function RevieweeScoresDashboard({ currentUser }: Props) {
     };
   });
 
-  const totalAreaEarned = tableData.reduce((acc, row) => acc + row.rowEarned, 0);
-  const totalAreaPossible = tableData.reduce((acc, row) => acc + row.rowPossible, 0);
+  // Add a special row for Major Area wide scores (e.g. Diagnostic for CLJ)
+  const majorAreaWideRecords = useMemo(() => {
+    return currentCategoryRecords.filter(r => 
+      normalizeScoreSubject(r.area) === normalizeScoreSubject(selectedMajorArea)
+    );
+  }, [currentCategoryRecords, selectedMajorArea]);
+
+  const majorAreaWideData = useMemo(() => {
+    if (majorAreaWideRecords.length === 0) return null;
+    
+    let rowEarned = 0;
+    let rowPossible = 0;
+    const dateScores: Record<string, { earned: number, possible: number }> = {};
+    
+    uniqueDates.forEach(d => {
+      const rec = majorAreaWideRecords.find(r => r.date === d);
+      if (rec) {
+        dateScores[d] = { earned: Number(rec.score) || 0, possible: Number(rec.totalItems) || 100 };
+        rowEarned += dateScores[d].earned;
+        rowPossible += dateScores[d].possible;
+      }
+    });
+
+    return {
+      subject: { code: selectedMajorArea, title: "Major Area Overall / Diagnostic" },
+      dateScores,
+      rowEarned,
+      rowPossible,
+      rating: rowPossible > 0 ? (rowEarned / rowPossible) * 100 : 0,
+      hasRecords: rowPossible > 0
+    };
+  }, [majorAreaWideRecords, uniqueDates, selectedMajorArea]);
+
+  const totalAreaEarned = tableData.reduce((acc, row) => acc + row.rowEarned, 0) + (majorAreaWideData?.rowEarned || 0);
+  const totalAreaPossible = tableData.reduce((acc, row) => acc + row.rowPossible, 0) + (majorAreaWideData?.rowPossible || 0);
   const totalAreaRating = totalAreaPossible > 0 ? (totalAreaEarned / totalAreaPossible) * 100 : 0;
 
   return (
     <div className="flex flex-col h-full bg-white overflow-auto">
       <div className="p-6 pb-24 space-y-6 max-w-7xl mx-auto w-full">
         {/* Header Section */}
-        <div className="flex justify-between items-end">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
           <div>
             <h1 className="text-3xl font-black text-slate-900">My Scores</h1>
             <p className="text-sm font-semibold text-slate-500 mt-1">
@@ -161,6 +225,27 @@ export default function RevieweeScoresDashboard({ currentUser }: Props) {
             <TrendingUp className="text-slate-400" size={16} />
             <span className="text-xs font-bold text-slate-700">Live Updating</span>
           </div>
+        </div>
+
+        {/* Published Folder Selector */}
+        <div className="flex gap-2 overflow-x-auto pb-2">
+          {publishedFolders.map(folder => (
+            <button
+              key={folder.id}
+              onClick={() => setSelectedFolder(folder)}
+              className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all flex items-center gap-2 ${
+                selectedFolder?.id === folder.id
+                  ? 'bg-slate-900 text-white shadow-lg scale-105'
+                  : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+              }`}
+            >
+              <Folder size={14} className={selectedFolder?.id === folder.id ? "text-teal-400" : "text-slate-400"} />
+              {formatFolderType(folder.type)}
+            </button>
+          ))}
+          {publishedFolders.length === 0 && (
+            <div className="text-xs font-bold text-slate-400 italic py-2">No published folders available</div>
+          )}
         </div>
 
         {/* Top Summary Cards */}
@@ -212,9 +297,9 @@ export default function RevieweeScoresDashboard({ currentUser }: Props) {
           </div>
         </div>
 
-        {/* Board Subject Areas Grid */}
+        {/* Board Major Area Grid */}
         <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-          <h2 className="text-lg font-black text-slate-900 mb-1">Board Subject Areas</h2>
+          <h2 className="text-lg font-black text-slate-900 mb-1">Board Major Area</h2>
           <p className="text-xs font-medium text-slate-500 mb-4">Select a major area to view scores by examination category.</p>
           
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
@@ -343,6 +428,41 @@ export default function RevieweeScoresDashboard({ currentUser }: Props) {
                       </td>
                     </tr>
                   ))}
+
+                  {majorAreaWideData && (
+                    <tr className="bg-blue-50/30 hover:bg-blue-50/50 transition-colors border-t-2 border-slate-200">
+                      <td className="px-4 py-3 text-center text-blue-600 font-black border-r border-blue-100">★</td>
+                      <td className="px-4 py-3 text-blue-900 font-black border-r border-blue-100">
+                        {majorAreaWideData.subject.title}
+                      </td>
+                      {uniqueDates.length === 0 ? (
+                        <td className="px-4 py-3 text-center text-slate-300 border-r border-slate-100">-</td>
+                      ) : (
+                        uniqueDates.map(date => {
+                          const val = majorAreaWideData.dateScores[date];
+                          return (
+                            <td key={date} className="px-4 py-3 text-center border-r border-blue-100 bg-blue-50/20">
+                              {val ? (
+                                <span className="font-black text-blue-700">{val.earned}/{val.possible}</span>
+                              ) : (
+                                <span className="text-slate-300">-</span>
+                              )}
+                            </td>
+                          );
+                        })
+                      )}
+                      <td className="px-4 py-3 text-center border-r border-blue-100 font-black bg-blue-100/50 text-blue-900">
+                        {majorAreaWideData.hasRecords ? `${majorAreaWideData.rowEarned}/${majorAreaWideData.rowPossible}` : '-'}
+                      </td>
+                      <td className="px-4 py-3 text-center font-black bg-blue-100/50">
+                        {majorAreaWideData.hasRecords ? (
+                          <span className="text-blue-700">{majorAreaWideData.rating.toFixed(2)}%</span>
+                        ) : (
+                          <span className="text-slate-400 font-bold">0.00%</span>
+                        )}
+                      </td>
+                    </tr>
+                  )}
                   
                   {tableData.length === 0 && (
                     <tr>

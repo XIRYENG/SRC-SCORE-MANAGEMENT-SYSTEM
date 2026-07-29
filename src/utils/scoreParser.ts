@@ -1,4 +1,5 @@
 import type { RevieweeData } from '../types';
+import { normalizeScoreSubject, normalizeScoreCategory } from './scoreFieldResolver';
 
 export interface ScoreRecord {
   area: string;
@@ -9,6 +10,8 @@ export interface ScoreRecord {
   percentage: number;
   result: string;
   source: string;
+  scoreFolderId?: string;
+  publicationStatus?: string;
 }
 
 const AREAS = [
@@ -38,9 +41,28 @@ export function getResultLabel(percentage: number): string {
   return 'Needs Improvement';
 }
 
+export function getNormalizedAreaLabel(subject: string): string {
+  const s = String(subject || '').toLowerCase().trim();
+  if (s === 'clj' || s === 'criminal law') return 'CLJ';
+  if (s === 'lea' || s === 'law enforcement') return 'LEA';
+  if (s === 'cdi' || s === 'crime detection') return 'CDI';
+  if (s === 'fs' || s === 'forensic science') return 'FS';
+  if (s === 'crim' || s === 'criminology') return 'CRIM';
+  if (s === 'ca' || s === 'cor-ad' || s === 'correctional') return 'CA';
+  
+  // If it starts with a major area code followed by a space (e.g., "CLJ 1"), return it as is or capitalized
+  if (/^(clj|lea|cdi|fs|crim|ca)\s/i.test(s)) {
+    return subject.toUpperCase();
+  }
+  
+  return subject;
+}
+
 export function parseScores(data: any): ScoreRecord[] {
   const records: ScoreRecord[] = [];
   
+  if (!data) return [];
+
   // 1. Parse flat fields
   AREAS.forEach(area => {
     FLAT_CATEGORIES.forEach(cat => {
@@ -70,47 +92,63 @@ export function parseScores(data: any): ScoreRecord[] {
           }
 
           records.push({
-            area: area.label,
+            area: getNormalizedAreaLabel(area.label),
             category: cat.label,
             date: dateStr,
             score: numScore,
             totalItems: 100, // Assuming raw score is out of 100 for flat fields
             percentage: numScore, 
             result: getResultLabel(numScore),
-            source: 'Uploaded'
+            source: 'Uploaded',
+            scoreFolderId: 'main',
+            publicationStatus: 'published'
           });
         }
       }
     });
   });
 
-  // 3. Parse assessmentRecords
+  // 2. Parse assessmentRecords
   if (data.assessmentRecords && typeof data.assessmentRecords === 'object') {
     Object.values(data.assessmentRecords).forEach((entry: any) => {
       if (entry && typeof entry === 'object') {
+        // Skip hidden records for student views
+        if (entry.publicationStatus === 'hidden') {
+          return;
+        }
+
         const numScore = Number(entry.score);
         const totalItems = Number(entry.totalScore) || 100;
         if (!isNaN(numScore) && totalItems > 0) {
+           const rawArea = entry.area || entry.subject || entry.subjectCode || 'General';
+           const normalizedArea = getNormalizedAreaLabel(rawArea);
+
            records.push({
-             area: entry.area || 'General',
+             area: normalizedArea,
              category: entry.category || 'Evaluation',
              date: entry.date || entry.createdAt?.split('T')[0] || '',
              score: numScore,
              totalItems: totalItems,
              percentage: (numScore / totalItems) * 100,
              result: getResultLabel((numScore / totalItems) * 100),
-             source: 'AssessmentRecord'
+             source: 'AssessmentRecord',
+             scoreFolderId: entry.scoreFolderId || 'main',
+             publicationStatus: entry.publicationStatus || 'published'
            });
         }
       }
     });
   }
 
-  // Deduplicate records (if same area, category, date, and source)
+  // Deduplicate records (if same area, category, and date)
   const uniqueRecords = new Map<string, ScoreRecord>();
   records.forEach(r => {
-    const key = `${r.area}_${r.category}_${r.date}_${r.source}`;
-    uniqueRecords.set(key, r); // Later ones (like scoresByDate) overwrite flat ones if conflict
+    const key = `${normalizeScoreSubject(r.area)}_${normalizeScoreCategory(r.category)}_${r.date}`;
+    const existing = uniqueRecords.get(key);
+    // Prefer AssessmentRecord over Uploaded flat scores
+    if (!existing || r.source === 'AssessmentRecord') {
+      uniqueRecords.set(key, r);
+    }
   });
 
   return Array.from(uniqueRecords.values()).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());

@@ -21,6 +21,7 @@ export default function App() {
   const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState(false);
   const [syncModalTab, setSyncModalTab] = useState<'details' | 'scores' | 'import_scores' | 'archived' | 'leaderboard' | 'activity'>('details');
   const [syncModalSection, setSyncModalSection] = useState<'main' | 'search' | 'duplicates' | 'mapping'>('main');
+  const [syncModalFolderId, setSyncModalFolderId] = useState<string | undefined>(undefined);
   const [loading, setLoading] = useState(false);
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'error'>('idle');
   const [syncProgress, setSyncProgress] = useState<number | undefined>(undefined);
@@ -121,7 +122,7 @@ export default function App() {
     };
   }, [enrollmentData]);
 
-  const openSyncModal = (section: 'main' | 'search' | 'duplicates' | 'mapping' = 'main', tab: 'details' | 'scores' | 'import_scores' | 'archived' | 'leaderboard' | 'activity' = 'details') => {
+  const openSyncModal = (section: 'main' | 'search' | 'duplicates' | 'mapping' = 'main', tab: 'details' | 'scores' | 'import_scores' | 'archived' | 'leaderboard' | 'activity' = 'details', folderId?: string) => {
     let url = '/syncsettings';
     if (section === 'search') {
       url += `/search-database/${tab}`;
@@ -133,6 +134,7 @@ export default function App() {
     window.history.pushState({}, '', url);
     setSyncModalSection(section);
     setSyncModalTab(tab);
+    setSyncModalFolderId(folderId);
     setIsSyncModalOpen(true);
   };
 
@@ -422,6 +424,7 @@ export default function App() {
           setBackgroundTasks={setBackgroundTasks}
           initialTab={syncModalTab}
           initialSection={syncModalSection}
+          scoreFolderId={syncModalFolderId}
         />
 
         {/* Main Content Pane */}
