@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { RevieweeData, ScoreFolder } from '../../types';
 import { useScoreFolders } from '../../hooks/useScoreFolders';
+import { isRevieweeInFolderScope } from '../../utils/folderScope';
 import { MyScoresBoardSubjectAreas } from './MyScoresBoardSubjectAreas';
 import { DailyEvaluationSubjectTable, RevieweeDateCol } from './DailyEvaluationSubjectTable';
 import { calculateAggregatedAreaRating } from '../../lib/scoreCalculations';
@@ -11,7 +12,13 @@ import { motion, AnimatePresence } from 'motion/react';
 
 export function MyScoresPage({ revieweeData, scores }: { revieweeData: RevieweeData; scores: ScoreRecord[] }) {
   const { folders } = useScoreFolders();
-  const publishedFolders = useMemo(() => folders.filter(f => f.publicationStatus === 'published' && !f.isArchived), [folders]);
+  const publishedFolders = useMemo(() => {
+    return folders.filter(f => 
+      f.publicationStatus === 'published' && 
+      !f.isArchived && 
+      isRevieweeInFolderScope(revieweeData, f)
+    );
+  }, [folders, revieweeData]);
   const [selectedFolder, setSelectedFolder] = useState<ScoreFolder | null>(publishedFolders[0] || null);
   const [selectedArea, setSelectedArea] = useState<string>('CLJ');
   const [selectedCategory, setSelectedCategory] = useState<string>('Daily Evaluation');

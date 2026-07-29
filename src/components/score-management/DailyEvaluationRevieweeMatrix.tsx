@@ -189,7 +189,7 @@ export function DailyEvaluationRevieweeMatrix({
     const first = (user.first_name || '').trim();
     const middle = (user.middle_name || '').trim();
     const middleInitial = middle ? `${middle.charAt(0)}.` : '';
-    return `${last}, ${first} ${middleInitial}`.trim().replace(/\s+/g, ' ');
+    return `${last}, ${first} ${middleInitial}`.trim().replace(/\s+/g, ' ').toUpperCase();
   };
 
   const allSelected = revieweeRows.length > 0 && selectedUserIds.length === revieweeRows.length;

@@ -1,12 +1,14 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Search, Download, Printer, Filter, ChevronDown, ChevronUp, Eye, CheckCircle2, FileText, Upload, ChevronLeft, ChevronRight, Check, MoreVertical, X, Pencil, Plus, Archive, Settings2 } from 'lucide-react';
+import { Search, Download, Printer, Filter, ChevronDown, ChevronUp, Eye, CheckCircle2, FileText, Upload, ChevronLeft, ChevronRight, Check, MoreVertical, X, Pencil, Plus, Archive, Settings2, Users } from 'lucide-react';
 import { useFirestoreUsers } from '../../hooks/useFirestoreUsers';
 import { normalizeScoreCategory, normalizeScoreSubject, getResolvedDetailedScore, getScoreFieldName } from '../../utils/scoreFieldResolver';
 import { getScoreLabel, getScoreColor } from '../DashboardShared';
 import { calculateAggregatedAreaRating } from '../../lib/scoreCalculations';
 import { ScoreRecord } from '../../utils/scoreParser';
-import { RevieweeData } from '../../types';
+import { RevieweeData, ScoreFolder } from '../../types';
+import { useScoreFolders } from '../../hooks/useScoreFolders';
+import { isRevieweeInFolderScope, formatFolderScopeDisplay } from '../../utils/folderScope';
 import { CompactEditableScoreCell } from '../CompactEditableScoreCell';
 import { firestoreDb } from '../../utils/firebaseClient';
 import { doc, updateDoc, serverTimestamp, collection, query, onSnapshot, writeBatch, deleteField } from 'firebase/firestore';
@@ -25,6 +27,7 @@ type ScoreManagementDashboardProps = {
   currentUser?: RevieweeData | null;
   scoreFolderId?: string;
   scoreFolderName?: string;
+  scoreFolder?: ScoreFolder | null;
 };
 
 const SUBJECTS_BY_AREA: Record<string, { code: string; title: string }[]> = {
@@ -285,8 +288,16 @@ function getUnifiedScore(user: any, category: string, subject: string, selectedD
   };
 }
 
-export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onOpenSyncModal, currentUser, scoreFolderId, scoreFolderName }: ScoreManagementDashboardProps) {
+export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onOpenSyncModal, currentUser, scoreFolderId, scoreFolderName, scoreFolder }: ScoreManagementDashboardProps) {
   const { allUsers, loading } = useFirestoreUsers();
+  const { folders: allScoreFolders } = useScoreFolders();
+  
+  const activeScoreFolder = useMemo(() => {
+    if (scoreFolder) return scoreFolder;
+    if (scoreFolderId) return allScoreFolders.find(f => f.id === scoreFolderId) || null;
+    return null;
+  }, [scoreFolder, scoreFolderId, allScoreFolders]);
+
   const [searchQuery, setSearchQuery] = useState('');
 
   // Score events (shared manual columns) state
@@ -540,7 +551,14 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
       const status = String(uAny.accountStatus || uAny.status || "").toLowerCase();
       if (status === "merged" || status === "deleted" || uAny.isDeleted || uAny.deleted || uAny.is_deleted) return false;
       if (!isValidUserRecord(u)) return false;
-      return u.role === "Reviewee";
+      if (u.role !== "Reviewee") return false;
+
+      // Filter by active score folder scope
+      if (activeScoreFolder) {
+        if (!isRevieweeInFolderScope(u, activeScoreFolder)) return false;
+      }
+
+      return true;
     }).map((u: RevieweeData) => {
       let filteredRecords = u.assessmentRecords;
       if (filteredRecords) {
@@ -645,13 +663,37 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
       }
     });
 
+    let finalSchools = Array.from(schs).filter(Boolean).sort();
+    let finalBranches = Array.from(branchMap.values()).sort((a, b) => a.localeCompare(b));
+
+    if (activeScoreFolder?.schoolScope === 'selected' && activeScoreFolder.selectedSchoolNames?.length) {
+      finalSchools = finalSchools.filter(s => activeScoreFolder.selectedSchoolNames!.some(sel => sel.toLowerCase() === s.toLowerCase()));
+      // Also ensure selected school names themselves are included in the dropdown even if no reviewee currently has it
+      activeScoreFolder.selectedSchoolNames.forEach(sel => {
+        if (!finalSchools.some(s => s.toLowerCase() === sel.toLowerCase())) {
+          finalSchools.push(sel);
+        }
+      });
+      finalSchools.sort();
+    }
+
+    if (activeScoreFolder?.branchScope === 'selected' && activeScoreFolder.selectedBranchNames?.length) {
+      finalBranches = finalBranches.filter(b => activeScoreFolder.selectedBranchNames!.some(sel => sel.toLowerCase() === b.toLowerCase()));
+      activeScoreFolder.selectedBranchNames.forEach(sel => {
+        if (!finalBranches.some(b => b.toLowerCase() === sel.toLowerCase())) {
+          finalBranches.push(sel);
+        }
+      });
+      finalBranches.sort((a, b) => a.localeCompare(b));
+    }
+
     return {
       categories: Array.from(cats).sort(),
       dates: Array.from(dts).sort((a, b) => new Date(b).getTime() - new Date(a).getTime()),
-      schools: Array.from(schs).filter(Boolean).sort(),
-      branches: Array.from(branchMap.values()).sort((a, b) => a.localeCompare(b))
+      schools: finalSchools,
+      branches: finalBranches
     };
-  }, [allUsers, allReviewees, selectedCategory, firestoreBranches, scoreEvents, scoreFolderId]);
+  }, [allUsers, allReviewees, selectedCategory, firestoreBranches, scoreEvents, scoreFolderId, activeScoreFolder]);
 
   React.useEffect(() => {
     if (selectedDate !== 'All Dates' && !dates.includes(selectedDate)) {
@@ -1438,8 +1480,30 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
       <div className="p-4 sm:p-6 pb-4 shrink-0 relative z-40">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
           <div>
-            <h1 className="text-xl sm:text-2xl font-black text-slate-900">Score Management</h1>
-            <p className="text-xs sm:text-sm font-medium text-slate-500 mt-0.5 uppercase tracking-wider">{selectedCategory}</p>
+            <h1 className="text-xl sm:text-2xl font-black text-slate-900">
+              {activeScoreFolder ? activeScoreFolder.name : "Score Management"}
+            </h1>
+            <div className="flex flex-wrap items-center gap-2 mt-1">
+              <p className="text-xs sm:text-sm font-medium text-slate-500 uppercase tracking-wider">{selectedCategory}</p>
+              {activeScoreFolder && (() => {
+                const scopeDisplay = formatFolderScopeDisplay(activeScoreFolder);
+                return (
+                  <>
+                    <span className="text-slate-300">•</span>
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold bg-violet-50 text-violet-700 border border-violet-200">
+                      School Scope: {scopeDisplay.schoolsLabel}
+                    </span>
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                      Branch Scope: {scopeDisplay.branchesLabel}
+                    </span>
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                      <Users size={12} />
+                      {allReviewees.length} Matching Reviewees
+                    </span>
+                  </>
+                );
+              })()}
+            </div>
           </div>
           <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
             <button 

@@ -29,6 +29,41 @@ service cloud.firestore {
       return signedIn() && userRole() == "Reviewee";
     }
 
+    function isSchoolInScope(folderData, userData) {
+      return !('schoolScope' in folderData) || folderData.schoolScope != 'selected' || (
+        ('selectedSchoolIds' in folderData && (
+          ('schoolId' in userData && folderData.selectedSchoolIds.hasAny([userData.schoolId])) ||
+          ('school_id' in userData && folderData.selectedSchoolIds.hasAny([userData.school_id]))
+        )) ||
+        ('selectedSchoolNames' in folderData && (
+          ('schoolName' in userData && folderData.selectedSchoolNames.hasAny([userData.schoolName])) ||
+          ('school_name' in userData && folderData.selectedSchoolNames.hasAny([userData.school_name])) ||
+          ('school' in userData && folderData.selectedSchoolNames.hasAny([userData.school]))
+        ))
+      );
+    }
+
+    function isBranchInScope(folderData, userData) {
+      return !('branchScope' in folderData) || folderData.branchScope != 'selected' || (
+        ('selectedBranchIds' in folderData && (
+          ('branchId' in userData && folderData.selectedBranchIds.hasAny([userData.branchId])) ||
+          ('branch_id' in userData && folderData.selectedBranchIds.hasAny([userData.branch_id]))
+        )) ||
+        ('selectedBranchNames' in folderData && (
+          ('branchName' in userData && folderData.selectedBranchNames.hasAny([userData.branchName])) ||
+          ('branch_name' in userData && folderData.selectedBranchNames.hasAny([userData.branch_name])) ||
+          ('reviewBranch' in userData && folderData.selectedBranchNames.hasAny([userData.reviewBranch])) ||
+          ('review_branch' in userData && folderData.selectedBranchNames.hasAny([userData.review_branch])) ||
+          ('branch' in userData && folderData.selectedBranchNames.hasAny([userData.branch]))
+        ))
+      );
+    }
+
+    function isUserInFolderScope(folderData) {
+      return isSchoolInScope(folderData, getUserDoc().data) &&
+             isBranchInScope(folderData, getUserDoc().data);
+    }
+
     match /audit_logs/{id} {
       allow create: if isAdminLike();
       allow read: if isAdmin();
@@ -61,6 +96,16 @@ service cloud.firestore {
     match /config/{id} {
       allow read: if true;
       allow write: if isAdmin();
+    }
+
+    match /score_folders/{folderId} {
+      allow read: if isAdminLike() || (
+        isReviewee() &&
+        resource.data.publicationStatus == 'published' &&
+        resource.data.isArchived != true &&
+        isUserInFolderScope(resource.data)
+      );
+      allow create, update, delete: if isAdminLike();
     }
 
     // Default

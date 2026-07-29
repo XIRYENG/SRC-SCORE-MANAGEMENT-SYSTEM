@@ -4,6 +4,7 @@ import { RevieweeData, ScoreFolder } from '../../types';
 import { ScoreRecord, parseScores } from '../../utils/scoreParser';
 import { normalizeScoreCategory, normalizeScoreSubject } from '../../utils/scoreFieldResolver';
 import { useScoreFolders } from '../../hooks/useScoreFolders';
+import { isRevieweeInFolderScope } from '../../utils/folderScope';
 
 const SUBJECTS_BY_AREA: Record<string, { code: string; title: string }[]> = {
   "CLJ": [
@@ -84,7 +85,13 @@ interface Props {
 
 export default function RevieweeScoresDashboard({ currentUser }: Props) {
   const { folders } = useScoreFolders();
-  const publishedFolders = useMemo(() => folders.filter(f => f.publicationStatus === 'published' && !f.isArchived), [folders]);
+  const publishedFolders = useMemo(() => {
+    return folders.filter(f => 
+      f.publicationStatus === 'published' && 
+      !f.isArchived && 
+      isRevieweeInFolderScope(currentUser, f)
+    );
+  }, [folders, currentUser]);
   const [selectedFolder, setSelectedFolder] = useState<ScoreFolder | null>(null);
   
   // Set default folder when folders load

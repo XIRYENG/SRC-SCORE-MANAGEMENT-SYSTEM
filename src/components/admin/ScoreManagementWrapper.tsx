@@ -32,12 +32,13 @@ export function ScoreManagementWrapper({ onOpenSyncModal, currentUser }: ScoreMa
           </div>
         </div>
         
-        {/* Pass the selected folder ID down to the dashboard */}
+        {/* Pass the selected folder object down to the dashboard */}
         <ScoreManagementDashboard 
           onOpenSyncModal={onOpenSyncModal}
           currentUser={currentUser}
           scoreFolderId={selectedFolder.id}
           scoreFolderName={selectedFolder.name}
+          scoreFolder={selectedFolder}
         />
       </div>
     );

@@ -6,6 +6,8 @@ export type MatchMethod =
   | 'NONE';
 
 import { getCanonicalFullName } from '../utils/nameNormalization';
+import { ScoreFolder } from '../types';
+import { isRevieweeInFolderScope } from '../utils/folderScope';
 
 export type RowStatus =
   | 'READY'
@@ -19,7 +21,8 @@ export type RowStatus =
   | 'DUPLICATE_CSV_ID'
   | 'DUPLICATE_DATABASE_ID'
   | 'EXISTING_SCORE'
-  | 'ALREADY_IMPORTED';
+  | 'ALREADY_IMPORTED'
+  | 'OUTSIDE_FOLDER_SCOPE';
 
 export interface CsvParsedRow {
   rowNum: number;
@@ -60,6 +63,7 @@ export interface ProcessCsvResult {
     duplicateCsvIdCount: number;
     duplicateDbIdCount: number;
     existingScoreCount: number;
+    outsideFolderScopeCount: number;
   };
 }
 
@@ -355,7 +359,8 @@ export function processCsvRows(
   allUsers: any[],
   selectedSubject: string,
   selectedCategory: string,
-  selectedDate: string
+  selectedDate: string,
+  scoreFolder?: ScoreFolder | null
 ): ProcessCsvResult {
   // 1. Header Validation
   const headerValidation = validateCsvHeaders(headers);
@@ -373,7 +378,8 @@ export function processCsvRows(
         invalidScoreCount: 0,
         duplicateCsvIdCount: 0,
         duplicateDbIdCount: 0,
-        existingScoreCount: 0
+        existingScoreCount: 0,
+        outsideFolderScopeCount: 0
       }
     };
   }
@@ -438,6 +444,7 @@ export function processCsvRows(
   let duplicateCsvIdCount = 0;
   let duplicateDbIdCount = 0;
   let existingScoreCount = 0;
+  let outsideFolderScopeCount = 0;
   let readyCount = 0;
 
   for (let idx = 0; idx < csvData.length; idx++) {
@@ -579,6 +586,18 @@ export function processCsvRows(
       }
     }
 
+    // --- CHECK FOLDER SCOPE ---
+    if (matchedUser && scoreFolder && !isRevieweeInFolderScope(matchedUser, scoreFolder)) {
+      if (status === 'READY') {
+        readyCount--;
+      } else if (status === 'EXISTING_SCORE') {
+        existingScoreCount--;
+      }
+      status = 'OUTSIDE_FOLDER_SCOPE';
+      remarks = `Reviewee found (${getCanonicalFullName(matchedUser).displayName}) but is not included in this folder's selected school or branch scope.`;
+      outsideFolderScopeCount++;
+    }
+
     if (status === 'READY') {
       readyCount++;
     }
@@ -670,7 +689,8 @@ export function processCsvRows(
       invalidScoreCount,
       duplicateCsvIdCount,
       duplicateDbIdCount,
-      existingScoreCount
+      existingScoreCount,
+      outsideFolderScopeCount
     }
   };
 }

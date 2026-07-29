@@ -38,6 +38,9 @@ import { getCanonicalFullName, normalizeNameForComparison } from '../utils/nameN
 import { collection, doc, getDocs, setDoc, serverTimestamp } from 'firebase/firestore';
 import { firestoreDb } from '../utils/firebaseClient';
 import { normalizeScoreCategory } from '../utils/scoreFieldResolver';
+import { ScoreFolder } from '../types';
+import { useScoreFolders } from '../hooks/useScoreFolders';
+import { isRevieweeInFolderScope } from '../utils/folderScope';
 import {
   processCsvRows,
   validateCsvHeaders,
@@ -54,7 +57,8 @@ export type PreviewStatusFilter =
   | 'DUPLICATES'
   | 'WITHOUT_SCORE'
   | 'INVALID'
-  | 'EXISTING_SCORE';
+  | 'EXISTING_SCORE'
+  | 'OUTSIDE_FOLDER_SCOPE';
 
 const isUnmatchedRow = (row: any) => {
   return row.status === 'ID_NOT_FOUND' || row.status === 'ID_NOT_FOUND_NAME_MATCH';
@@ -281,6 +285,7 @@ interface ScoreUploaderProps {
   backgroundTasks: any[];
   setBackgroundTasks: React.Dispatch<React.SetStateAction<any[]>>;
   scoreFolderId?: string;
+  scoreFolder?: ScoreFolder | null;
 }
 
 type UploadStatus = 'idle' | 'working' | 'success' | 'error';
@@ -292,8 +297,15 @@ export const ScoreUploader: React.FC<ScoreUploaderProps> = ({
   currentUser,
   backgroundTasks,
   setBackgroundTasks,
-  scoreFolderId
+  scoreFolderId,
+  scoreFolder
 }) => {
+  const { folders: allScoreFolders } = useScoreFolders();
+  const activeScoreFolder = useMemo(() => {
+    if (scoreFolder) return scoreFolder;
+    if (scoreFolderId) return allScoreFolders.find(f => f.id === scoreFolderId) || null;
+    return null;
+  }, [scoreFolder, scoreFolderId, allScoreFolders]);
   const [isImporting, setIsImporting] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<UploadStatus>('idle');
   const [uploadStage, setUploadStage] = useState('');
@@ -509,6 +521,13 @@ export const ScoreUploader: React.FC<ScoreUploaderProps> = ({
             "EXISTING_SCORE",
         ).length,
 
+      outsideFolderScope:
+        uniqueImportRows.filter(
+          row =>
+            row.status ===
+            "OUTSIDE_FOLDER_SCOPE",
+        ).length,
+
       revieweesWithoutScore,
     };
   }, [rowsState, eligibleReviewees]);
@@ -587,7 +606,8 @@ export const ScoreUploader: React.FC<ScoreUploaderProps> = ({
       allUsers,
       selectedSubject,
       selectedCategory,
-      selectedDate
+      selectedDate,
+      activeScoreFolder || undefined
     );
 
     if (!result.headerValidation.isValid) {
@@ -1010,6 +1030,13 @@ export const ScoreUploader: React.FC<ScoreUploaderProps> = ({
             Existing Score
           </span>
         );
+      case 'OUTSIDE_FOLDER_SCOPE':
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-800 border border-amber-300">
+            <AlertCircle size={12} className="text-amber-700" />
+            Outside Folder Scope
+          </span>
+        );
       default:
         return <span className="text-xs text-slate-500">{status}</span>;
     }
@@ -1017,6 +1044,7 @@ export const ScoreUploader: React.FC<ScoreUploaderProps> = ({
 
   // Filtered rows for preview table
   const filteredPreviewRows = rowsState.filter(row => {
+    if (previewStatusFilter === 'OUTSIDE_FOLDER_SCOPE' && row.status !== 'OUTSIDE_FOLDER_SCOPE') return false;
     if (previewTab === 'ready' && row.status !== 'READY') return false;
     if (previewTab === 'conflicts' && row.status !== 'ID_NAME_CONFLICT' && row.status !== 'AMBIGUOUS_NAME') return false;
     if (previewTab === 'unmatched' && row.status !== 'ID_NOT_FOUND' && row.status !== 'ID_NOT_FOUND_NAME_MATCH') return false;
@@ -1429,6 +1457,16 @@ export const ScoreUploader: React.FC<ScoreUploaderProps> = ({
                       onSelect={setPreviewStatusFilter}
                       tone="yellow"
                     />
+                    {matchingSummary.outsideFolderScope > 0 && (
+                      <SummaryCard
+                        label="Outside Folder Scope"
+                        count={matchingSummary.outsideFolderScope}
+                        filter="OUTSIDE_FOLDER_SCOPE"
+                        activeFilter={previewStatusFilter}
+                        onSelect={setPreviewStatusFilter}
+                        tone="amber"
+                      />
+                    )}
                   </div>
                 )}
 
@@ -1447,7 +1485,7 @@ export const ScoreUploader: React.FC<ScoreUploaderProps> = ({
                           className="text-xs font-bold p-1.5 border border-slate-200 rounded-lg bg-white text-slate-800 outline-none focus:border-blue-500 cursor-pointer"
                         >
                           <option value="ALL">All Schools</option>
-                          {uniqueSchools.map(s => <option key={s} value={s}>{s}</option>)}
+                          {uniqueSchools.map((s, i) => <option key={`${s}_${i}`} value={s}>{s}</option>)}
                         </select>
                       </div>
 
@@ -1459,7 +1497,7 @@ export const ScoreUploader: React.FC<ScoreUploaderProps> = ({
                           className="text-xs font-bold p-1.5 border border-slate-200 rounded-lg bg-white text-slate-800 outline-none focus:border-blue-500 cursor-pointer"
                         >
                           <option value="ALL">All Branches</option>
-                          {uniqueBranches.map(b => <option key={b} value={b}>{b}</option>)}
+                          {uniqueBranches.map((b, i) => <option key={`${b}_${i}`} value={b}>{b}</option>)}
                         </select>
                       </div>
 
@@ -1471,7 +1509,7 @@ export const ScoreUploader: React.FC<ScoreUploaderProps> = ({
                           className="text-xs font-bold p-1.5 border border-slate-200 rounded-lg bg-white text-slate-800 outline-none focus:border-blue-500 cursor-pointer"
                         >
                           <option value="ALL">All Batches</option>
-                          {uniqueBatches.map(b => <option key={b} value={b}>{b}</option>)}
+                          {uniqueBatches.map((b, i) => <option key={`${b}_${i}`} value={b}>{b}</option>)}
                         </select>
                       </div>
                     </div>
@@ -1653,6 +1691,9 @@ export const ScoreUploader: React.FC<ScoreUploaderProps> = ({
             <div className="flex-1 overflow-y-auto divide-y divide-slate-100 border border-slate-100 rounded-xl custom-scrollbar" style={{ fontFamily: "'Google Sans', 'Plus Jakarta Sans', 'Inter', sans-serif" }}>
               {uniqueAllReviewees
                 .filter(u => {
+                  if (activeScoreFolder && !isRevieweeInFolderScope(u, activeScoreFolder)) {
+                    return false;
+                  }
                   if (!manualUserSearch) return true;
                   const qNorm = normalizeNameForComparison(manualUserSearch);
                   const canonical = getCanonicalFullName(u);

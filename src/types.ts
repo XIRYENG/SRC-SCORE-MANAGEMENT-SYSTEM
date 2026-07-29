@@ -46,6 +46,12 @@ export interface ScoreFolder {
   archivedBy?: string;
   restoredAt?: any;
   restoredBy?: string;
+  schoolScope: 'all' | 'selected';
+  selectedSchoolIds: string[];
+  selectedSchoolNames: string[];
+  branchScope: 'all' | 'selected';
+  selectedBranchIds: string[];
+  selectedBranchNames: string[];
 }
 
 export interface RevieweeData {
