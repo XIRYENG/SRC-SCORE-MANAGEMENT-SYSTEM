@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react';
 import { collection, query, where, orderBy, onSnapshot, type Firestore } from 'firebase/firestore';
 import type { Notification } from '../types';
+import { logFirestoreError } from '../utils/firestoreErrorHandling';
 
-export const useNotifications = (db: Firestore, userId: string | undefined) => {
+export const useNotifications = (db: Firestore | null, userId: string | undefined) => {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<any>(null);
 
   useEffect(() => {
-    if (!userId) {
+    if (!db || !userId) {
       setLoading(false);
       return;
     }
@@ -34,9 +36,11 @@ export const useNotifications = (db: Firestore, userId: string | undefined) => {
 
         setNotifications(notificationsData);
         setLoading(false);
+        setError(null);
       },
-      (error) => {
-        console.error("Notification listener failed:", error);
+      (err) => {
+        const issue = logFirestoreError("notifications-hook", err);
+        setError(issue);
         setLoading(false);
       }
     );
@@ -44,5 +48,5 @@ export const useNotifications = (db: Firestore, userId: string | undefined) => {
     return () => unsubscribe();
   }, [db, userId]);
 
-  return { notifications, loading };
+  return { notifications, loading, error };
 };

@@ -1,38 +1,37 @@
 import { useState, useEffect } from 'react';
 import { collection, onSnapshot, query } from 'firebase/firestore';
-import { firestoreDb, initFirebaseClient } from '../utils/firebaseClient';
+import { firestoreDb } from '../utils/firebaseClient';
+import { logFirestoreError } from '../utils/firestoreErrorHandling';
 
 export function useFirestoreUsers() {
   const [allUsers, setAllUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<any>(null);
 
   useEffect(() => {
-    const init = async () => {
-      const { db } = await initFirebaseClient();
-      if (!db) return;
+    if (!firestoreDb) return;
 
-      const q = query(collection(db, "users"));
-      const unsub = onSnapshot(
-        q,
-        (snapshot) => {
-          const users = snapshot.docs.map((doc) => ({
-            uid: doc.id,
-            ...doc.data(),
-          }));
+    const q = query(collection(firestoreDb, "users"));
+    const unsub = onSnapshot(
+      q,
+      (snapshot) => {
+        const users = snapshot.docs.map((doc) => ({
+          uid: doc.id,
+          ...doc.data(),
+        }));
 
-          setAllUsers(users);
-          setLoading(false);
-        },
-        (error) => {
-          console.error("Failed to load users:", error);
-          setLoading(false);
-        }
-      );
-      return () => unsub();
-    };
-
-    init();
+        setAllUsers(users);
+        setLoading(false);
+        setError(null);
+      },
+      (err) => {
+        const issue = logFirestoreError("users-hook", err);
+        setError(issue);
+        setLoading(false);
+      }
+    );
+    return () => unsub();
   }, []);
 
-  return { allUsers, loading };
+  return { allUsers, loading, error };
 }

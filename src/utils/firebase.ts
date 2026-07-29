@@ -1,6 +1,11 @@
 /// <reference types="vite/client" />
 import { initializeApp, getApps, getApp, type FirebaseApp } from "firebase/app";
-import { getFirestore, type Firestore } from "firebase/firestore";
+import { 
+  initializeFirestore, 
+  getFirestore, 
+  memoryLocalCache,
+  type Firestore 
+} from "firebase/firestore";
 import { getAuth, type Auth } from "firebase/auth";
 import { getAnalytics, isSupported } from "firebase/analytics";
 import configJson from "../../firebase-applet-config.json";
@@ -61,6 +66,27 @@ try {
   if (firebaseConfigured) {
     app = getApps().length > 0 ? getApp() : initializeApp(config);
     auth = getAuth(app);
+    
+    // Initialize Firestore once with recommended settings
+    const forceLongPolling = import.meta.env.VITE_FIRESTORE_FORCE_LONG_POLLING === "true";
+    
+    try {
+      db = initializeFirestore(app, {
+        localCache: memoryLocalCache(),
+        ignoreUndefinedProperties: true,
+        ...(forceLongPolling 
+          ? { experimentalForceLongPolling: true } 
+          : { experimentalAutoDetectLongPolling: true })
+      });
+      console.info(`Firestore initialized with ${forceLongPolling ? 'force' : 'auto-detect'} long polling.`);
+    } catch (error: any) {
+      if (error.code === 'failed-precondition') {
+        db = getFirestore(app);
+        console.warn("Firestore already initialized, reusing instance.");
+      } else {
+        console.error("Firestore initialization failed:", error);
+      }
+    }
     
     // Safely init analytics
     isSupported().then(supported => {

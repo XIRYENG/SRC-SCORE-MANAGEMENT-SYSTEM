@@ -1403,6 +1403,10 @@ export const SyncModal: React.FC<SyncModalProps> = ({
   };
 
   const handleImportScores = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!isAdminLike(currentUser)) {
+      alert("Only Admin and Staff can import scores.");
+      return;
+    }
     const file = e.target.files?.[0];
     if (!file) return;
 

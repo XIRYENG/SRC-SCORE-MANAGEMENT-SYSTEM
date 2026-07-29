@@ -19,55 +19,11 @@ import {
   serverTimestamp,
   type Firestore,
 } from "firebase/firestore";
-import { app, firebaseConfigured, getFirebaseConfig } from "./firebase";
+import { app, firebaseConfigured, getFirebaseConfig, db as sharedDb } from "./firebase";
 import { cleanOptionalName } from "../services/userIdentityResolver";
 
-let dbInstance: Firestore;
-
-function getFirestoreSingleton(): Firestore {
-  if (dbInstance) return dbInstance;
-
-  if (!firebaseConfigured || !app) {
-      throw new Error("Firestore is unavailable because Firebase configuration is incomplete.");
-  }
-
-  const { config } = getFirebaseConfig();
-
-  try {
-    const dbId = (config as any).firestoreDatabaseId;
-
-    const options = {
-      experimentalForceLongPolling: true,
-      localCache: persistentLocalCache({
-        tabManager: persistentMultipleTabManager(),
-      }),
-    };
-
-    dbInstance =
-      dbId && dbId !== "(default)"
-        ? initializeFirestore(app, options, dbId)
-        : initializeFirestore(app, options);
-
-    console.log("Firestore initialized once with configured options.");
-  } catch (error: any) {
-    const message = String(error?.message || "");
-
-    if (
-      message.includes("initializeFirestore() has already been called") ||
-      message.includes("Firestore has already been started")
-    ) {
-      dbInstance = getFirestore(app);
-      console.warn("Firestore was already initialized. Reusing existing instance.");
-    } else {
-      console.error("Client Firebase initialization FAILED:", error);
-      throw error;
-    }
-  }
-
-  return dbInstance;
-}
-
-export const firestoreDb = (firebaseConfigured && app) ? getFirestoreSingleton() : (null as unknown as Firestore);
+// Use the shared database instance
+export const firestoreDb = sharedDb as Firestore;
 
 export const requireFirestore = (): Firestore => {
   if (!firestoreDb) {

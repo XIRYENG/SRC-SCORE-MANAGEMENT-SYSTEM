@@ -11,9 +11,12 @@ import { FirebaseDiagnosticPanel } from './components/FirebaseDiagnosticPanel';
 import { getUserRole, isAdmin, isStaff, isAdminLike } from './utils/roleUtils';
 import { initAuth, logout } from './utils/auth';
 import { firebaseConfigured, getFirebaseConfig } from './utils/firebase';
+import { useBrowserOnlineStatus } from './hooks/useBrowserOnlineStatus';
+import { WifiOff, Loader2 } from 'lucide-react';
 import type { RevieweeData } from './types';
 
 export default function App() {
+  const isOnline = useBrowserOnlineStatus();
   const [view, setView] = useState<'form' | 'success' | 'portal'>('form');
   const [enrollmentData, setEnrollmentData] = useState<RevieweeData | null>(null);
   const [lastGeneratedId, setLastGeneratedId] = useState<string | null>(null);
@@ -411,6 +414,21 @@ export default function App() {
       />
 
       <div className="relative z-10 flex flex-col min-h-screen">
+        <AnimatePresence>
+          {!isOnline && (
+            <motion.div
+              initial={{ opacity: 0, y: -50 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -50 }}
+              className="fixed top-0 left-0 right-0 z-[100002] bg-amber-500 text-white px-4 py-2 flex items-center justify-center gap-3 shadow-lg"
+            >
+              <WifiOff size={16} className="animate-pulse" />
+              <span className="text-xs font-black uppercase tracking-widest">
+                Connection Interrupted. Reconnecting…
+              </span>
+            </motion.div>
+          )}
+        </AnimatePresence>
         <SyncModal 
           isOpen={isSyncModalOpen && view !== 'portal'} 
           onClose={closeSyncModal} 

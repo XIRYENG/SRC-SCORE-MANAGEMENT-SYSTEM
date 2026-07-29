@@ -2,12 +2,19 @@ import { useState, useEffect } from 'react';
 import { collection, query, onSnapshot, orderBy } from 'firebase/firestore';
 import { firestoreDb } from '../utils/firebaseClient';
 import { ScoreFolder } from '../types';
+import { logFirestoreError } from '../utils/firestoreErrorHandling';
 
 export function useScoreFolders() {
   const [folders, setFolders] = useState<ScoreFolder[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<any>(null);
 
   useEffect(() => {
+    if (!firestoreDb) {
+      setLoading(false);
+      return;
+    }
+
     const q = query(
       collection(firestoreDb, 'scoreFolders'),
       orderBy('createdAt', 'desc')
@@ -20,13 +27,15 @@ export function useScoreFolders() {
       });
       setFolders(folderList);
       setLoading(false);
-    }, (error) => {
-      console.error('Error fetching score folders:', error);
+      setError(null);
+    }, (err) => {
+      const issue = logFirestoreError("score-folders-hook", err);
+      setError(issue);
       setLoading(false);
     });
 
     return () => unsubscribe();
   }, []);
 
-  return { folders, loading };
+  return { folders, loading, error };
 }

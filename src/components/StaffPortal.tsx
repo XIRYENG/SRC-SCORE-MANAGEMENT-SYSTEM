@@ -122,6 +122,7 @@ export function StaffPortal({ data, onLogout, onOpenSyncModal, syncProps }: Staf
   const [gradeWeights, setGradeWeights] = useState<GradeWeights>(DEFAULT_GRADE_WEIGHTS);
   const [selectedSubjectBreakdown, setSelectedSubjectBreakdown] = useState<{
     subject: string;
+    areaCode?: string;
     revieweeName?: string;
     breakdown: any[];
     totalPercentage: number;
@@ -167,7 +168,8 @@ export function StaffPortal({ data, onLogout, onOpenSyncModal, syncProps }: Staf
 
     setSelectedSubjectBreakdown({
       subject: subjectLabel,
-      revieweeName: "All Enrolled Reviewees (Averages)",
+      areaCode: subjectKey,
+      revieweeName: undefined,
       breakdown,
       totalPercentage,
       totalEarned: 0,
@@ -472,12 +474,14 @@ export function StaffPortal({ data, onLogout, onOpenSyncModal, syncProps }: Staf
           isOpen={!!selectedSubjectBreakdown}
           onClose={() => setSelectedSubjectBreakdown(null)}
           areaTitle={selectedSubjectBreakdown.subject}
-          areaCode={selectedSubjectBreakdown.subject}
+          areaCode={selectedSubjectBreakdown.areaCode || selectedSubjectBreakdown.subject}
           revieweeLabel={selectedSubjectBreakdown.revieweeName}
           breakdown={selectedSubjectBreakdown.breakdown}
           totalPercentage={selectedSubjectBreakdown.totalPercentage}
           totalEarned={selectedSubjectBreakdown.totalEarned}
           totalPossible={selectedSubjectBreakdown.totalPossible}
+          reviewees={reviewees}
+          gradeWeights={gradeWeights}
         />
       )}
     </PortalLayout>
