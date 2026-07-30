@@ -36,7 +36,7 @@ import {
 } from 'lucide-react';
 import { useFirestoreUsers } from '../hooks/useFirestoreUsers';
 import { useScoreFolders } from '../hooks/useScoreFolders';
-import { isRevieweeInFolderScope } from '../utils/folderScope';
+import { isRevieweeInFolderScope, formatFolderType } from '../utils/folderScope';
 import type { RevieweeData } from '../types';
 import { getUserRole } from '../utils/roleUtils';
 import { isValidRevieweeRecord } from '../services/userIdentityResolver';
@@ -461,7 +461,7 @@ export function StaffPortal({ data, onLogout, onOpenSyncModal, syncProps }: Staf
                       <div className="flex items-center gap-2 overflow-hidden">
                         <span className="text-sm font-bold text-slate-800 truncate">
                           {dashboardFolderId === 'all' ? '📂 All Folders (Pooled Analytics)' : (
-                            <>📁 {activeDashboardFolder?.name} {activeDashboardFolder?.type ? `(${activeDashboardFolder.type.replace(/_/g, ' ')})` : ''}</>
+                          <>📁 {activeDashboardFolder?.name} {activeDashboardFolder?.type ? `(${formatFolderType(activeDashboardFolder.type)})` : ''}</>
                           )}
                         </span>
                       </div>
@@ -522,7 +522,7 @@ export function StaffPortal({ data, onLogout, onOpenSyncModal, syncProps }: Staf
                                 >
                                   <div className="flex flex-col min-w-0 flex-1">
                                     <span className="text-xs font-bold text-slate-800 truncate">📁 {folder.name}</span>
-                                    <span className="text-[10px] text-slate-400 uppercase font-black">{folder.type?.replace(/_/g, ' ') || 'Folder'}</span>
+                                    <span className="text-[10px] text-slate-400 uppercase font-black">{formatFolderType(folder.type)}</span>
                                   </div>
                                   {dashboardFolderId === folder.id && <Check className="w-4 h-4 text-teal-600" />}
                                 </button>
@@ -569,7 +569,7 @@ export function StaffPortal({ data, onLogout, onOpenSyncModal, syncProps }: Staf
                         />
                         <div className="flex flex-col min-w-0">
                           <span className="text-xs font-bold text-slate-900 dark:text-white truncate">{folder.name}</span>
-                          <span className="text-[10px] text-slate-400 uppercase font-black">{folder.type?.replace(/_/g, ' ') || 'Folder'}</span>
+                          <span className="text-[10px] text-slate-400 uppercase font-black">{formatFolderType(folder.type)}</span>
                         </div>
                       </label>
                     ))}

@@ -805,7 +805,7 @@ export function AdminPortal({ data, onLogout, onOpenSyncModal, syncProps }: Admi
                                     />
                                     <div className="flex flex-col min-w-0 flex-1">
                                       <span className="text-xs font-bold text-slate-800 truncate">{folder.name}</span>
-                                      <span className="text-[10px] text-slate-400 uppercase font-black">{folder.type?.replace(/_/g, ' ') || 'Folder'}</span>
+                                      <span className="text-[10px] text-slate-400 uppercase font-black">{formatFolderType(folder.type)}</span>
                                     </div>
                                   </label>
                                 );
