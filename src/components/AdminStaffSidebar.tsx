@@ -87,8 +87,8 @@ export const AdminStaffSidebar: React.FC<AdminStaffSidebarProps> = ({
             <UserAvatar 
               photoURL={currentUserProfile?.photo_url || currentUserProfile?.photoUrl} 
               altText={fullName} 
-              size={40}
-              className="h-10 w-10 shrink-0 rounded-full object-cover border-2 border-slate-200 bg-white shadow-sm"
+              size={44}
+              className="h-11 w-11 shrink-0 rounded-full object-cover"
             />
 
             <div className="min-w-0 flex-1">

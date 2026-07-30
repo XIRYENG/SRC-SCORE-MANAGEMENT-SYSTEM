@@ -22,6 +22,8 @@ import {
   calculateMajorAreaContributionBreakdown, 
   MajorAreaContributionBreakdown 
 } from "../../utils/schoolContributionCalculator";
+import { getSchoolDisplayName } from "../../utils/schoolDisplayName";
+import { ScoreFolder } from "../../types";
 
 type AreaPerformanceModalProps = {
   isOpen: boolean;
@@ -35,6 +37,7 @@ type AreaPerformanceModalProps = {
   totalPossible?: number;
   reviewees?: Record<string, any>[];
   gradeWeights?: GradeWeights;
+  selectedFolders?: ScoreFolder[];
 };
 
 export function AreaPerformanceModal({
@@ -49,6 +52,7 @@ export function AreaPerformanceModal({
   totalPossible: legacyTotalPossible = 0,
   reviewees = [],
   gradeWeights,
+  selectedFolders,
 }: AreaPerformanceModalProps) {
   const [aggregationMethod, setAggregationMethod] = useState<'Reviewee-Weighted Average' | 'Equal School Average'>('Reviewee-Weighted Average');
   const [expandedCategories, setExpandedCategories] = useState<Record<string, boolean>>({});
@@ -66,9 +70,10 @@ export function AreaPerformanceModal({
       areaCode,
       areaTitle,
       gradeWeights,
-      aggregationMethod
+      aggregationMethod,
+      selectedFolders
     );
-  }, [reviewees, areaCode, areaTitle, gradeWeights, aggregationMethod, isPersonalView]);
+  }, [reviewees, areaCode, areaTitle, gradeWeights, aggregationMethod, isPersonalView, selectedFolders]);
 
   const effectiveTotalPercentage = contributionBreakdown 
     ? contributionBreakdown.majorAreaRating 
@@ -252,6 +257,50 @@ export function AreaPerformanceModal({
                   </p>
                 </div>
               </div>
+
+              {/* Section B: Major Area Contribution to Overall Grade */}
+              {(() => {
+                const MAJOR_AREA_WEIGHTS: Record<string, number> = {
+                  clj: 20,
+                  lea: 20,
+                  cdi: 15,
+                  fs: 20,
+                  crim: 15,
+                  ca: 10,
+                  "cor-ad": 10,
+                };
+                const areaWeight = MAJOR_AREA_WEIGHTS[areaCode.toLowerCase()] || 20;
+                const overallContribution = effectiveTotalPercentage * (areaWeight / 100);
+                return (
+                  <div className="rounded-2xl border border-slate-200 dark:border-slate-800 p-5 bg-gradient-to-br from-teal-50/50 to-white dark:from-slate-950 dark:to-slate-900 shadow-xs space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-xs font-black uppercase tracking-widest text-teal-800 dark:text-teal-400 flex items-center gap-2">
+                        <Award size={16} /> Section B: Major Area Contribution to Overall Grade
+                      </h4>
+                      <span className="rounded-full bg-teal-100 dark:bg-teal-950/60 px-3 py-1 text-xs font-black text-teal-800 dark:text-teal-300">
+                        Area Weight: {areaWeight.toFixed(2)}%
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm pt-2 border-t border-slate-200/60 dark:border-slate-800">
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Final {areaCode.toUpperCase()} Rating</p>
+                        <p className="text-xl font-black text-slate-900 dark:text-white mt-0.5">{effectiveTotalPercentage.toFixed(2)}%</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Assigned Area Weight</p>
+                        <p className="text-xl font-black text-slate-900 dark:text-white mt-0.5">{areaWeight.toFixed(2)}%</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Contribution to Overall Grade</p>
+                        <p className="text-xl font-black text-teal-700 dark:text-teal-400 mt-0.5">{overallContribution.toFixed(2)}%</p>
+                      </div>
+                    </div>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 font-medium pt-1">
+                      Formula: Final Area Rating ({effectiveTotalPercentage.toFixed(2)}%) × Major Area Weight ({areaWeight.toFixed(2)}%) = <strong>{overallContribution.toFixed(2)}%</strong> contribution to overall reviewee grade.
+                    </p>
+                  </div>
+                );
+              })()}
 
               {/* Aggregation Selector & Weight Warning */}
               <div className="flex flex-wrap items-center justify-between gap-4 p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950">
@@ -465,8 +514,8 @@ export function AreaPerformanceModal({
                       <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                         {contributionBreakdown.schoolSummary.map(school => (
                           <tr key={school.schoolId} className="hover:bg-slate-50/50 dark:hover:bg-slate-900/30">
-                            <td className="px-4 py-3 font-bold text-slate-900 dark:text-white">
-                              {school.schoolId}
+                            <td className="px-4 py-3 font-bold text-slate-900 dark:text-white whitespace-normal break-words max-w-[280px]">
+                              {getSchoolDisplayName(school.schoolName)}
                             </td>
                             {contributionBreakdown.categories.map(c => {
                               const val = school.categoryContributions[c.categoryId] || 0;

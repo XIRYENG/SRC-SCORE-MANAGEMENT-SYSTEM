@@ -27,6 +27,7 @@ import RevieweeScoresDashboard from './reviewee/RevieweeScoresDashboard';
 import { doc, updateDoc, serverTimestamp, onSnapshot } from 'firebase/firestore';
 import { DEFAULT_GRADE_WEIGHTS, GradeWeights, SubjectArea, GRADE_CATEGORY_LABELS, GradeCategoryKey } from '../utils/gradeCalculation';
 import { calculateRevieweeArea } from '../utils/calculateRevieweeArea';
+import { useScoreFolders } from '../hooks/useScoreFolders';
 import { AreaPerformanceCircle } from './AreaPerformanceCircle';
 import { AreaPerformanceModal } from './performance/AreaPerformanceModal';
 import { getResolvedScore } from '../utils/scoreFieldResolver';
@@ -59,6 +60,7 @@ export function RevieweePortal({ data, onLogout }: { data: RevieweeData, onLogou
     return localStorage.getItem('reviewee_active_tab') || 'dashboard';
   });
   const { allUsers } = useFirestoreUsers();
+  const { folders: allScoreFolders } = useScoreFolders();
   const { notifications } = useNotifications(firestoreDb, data.uid || "");
   
   const unreadCount = useMemo(() => notifications.filter(n => !n.isRead).length, [notifications]);
@@ -111,7 +113,7 @@ export function RevieweePortal({ data, onLogout }: { data: RevieweeData, onLogou
   }, []);
 
   const handleAreaCardClick = (subjectLabel: string, subjectKey: SubjectArea) => {
-    const result = calculateRevieweeArea(revieweeData, subjectKey, gradeWeights);
+    const result = calculateRevieweeArea(revieweeData, subjectKey, gradeWeights, "include", undefined, allUsers, allScoreFolders);
     const name = [
       revieweeData.first_name,
       revieweeData.middle_name,
@@ -121,7 +123,7 @@ export function RevieweePortal({ data, onLogout }: { data: RevieweeData, onLogou
       subject: subjectLabel,
       revieweeName: name,
       breakdown: result.breakdown,
-      totalPercentage: result.percentage,
+      totalPercentage: result.percentage ?? 0,
       totalEarned: result.totalEarned,
       totalPossible: result.totalPossible
     });
@@ -132,10 +134,12 @@ export function RevieweePortal({ data, onLogout }: { data: RevieweeData, onLogou
   const avgScore = useMemo(() => {
     const subjects: SubjectArea[] = ["clj", "lea", "cdi", "fs", "crim", "ca"];
     const areaScores = subjects.map(subj => {
-      return calculateRevieweeArea(revieweeData, subj, gradeWeights).percentage;
+      return calculateRevieweeArea(revieweeData, subj, gradeWeights, "include", undefined, allUsers, allScoreFolders).percentage;
     });
-    return Number((areaScores.reduce((sum, val) => sum + val, 0) / subjects.length).toFixed(1));
-  }, [revieweeData, gradeWeights]);
+    const validScores = areaScores.filter(s => s !== null && s !== undefined) as number[];
+    if (validScores.length === 0) return 0;
+    return Number((validScores.reduce((sum, val) => sum + val, 0) / subjects.length).toFixed(1));
+  }, [revieweeData, gradeWeights, allScoreFolders]);
   
   // Calculate dynamic rank for this specific reviewee among all reviewees
   const rankInfo = useMemo(() => {
@@ -149,9 +153,10 @@ export function RevieweePortal({ data, onLogout }: { data: RevieweeData, onLogou
     const ranked = revieweesList.map((u: any) => {
       const subjects: SubjectArea[] = ["clj", "lea", "cdi", "fs", "crim", "ca"];
       const areaScores = subjects.map(subj => {
-        return calculateRevieweeArea(u, subj, gradeWeights).percentage;
+        return calculateRevieweeArea(u, subj, gradeWeights, "include", undefined, allUsers, allScoreFolders).percentage;
       });
-      const uAvg = areaScores.reduce((sum, val) => sum + val, 0) / subjects.length;
+      const validScores = areaScores.filter(s => s !== null && s !== undefined) as number[];
+      const uAvg = validScores.length > 0 ? validScores.reduce((sum, val) => sum + val, 0) / subjects.length : 0;
       const count = subjects.reduce((sum, subj) => {
         const categories: GradeCategoryKey[] = ["preboard", "pretest", "posttest", "quiz", "dailyEvaluation", "removal", "diagnostic"];
         const actualCount = categories.reduce((c, cat) => getResolvedScore(u, cat, subj) !== null ? c + 1 : c, 0);
@@ -190,7 +195,7 @@ export function RevieweePortal({ data, onLogout }: { data: RevieweeData, onLogou
       subtitle: `Out of ${total} Evaluated Reviewees`,
       topPercent: percentile <= 20 ? `Top ${percentile}% of Batch` : `Ranked ${rankNum} of ${total}`
     };
-  }, [allUsers, revieweeData, scores, gradeWeights]);
+  }, [allUsers, revieweeData, scores, gradeWeights, allScoreFolders]);
 
   // Calculate dynamic course progress for this specific reviewee
   const progressInfo = useMemo(() => {
@@ -218,19 +223,19 @@ export function RevieweePortal({ data, onLogout }: { data: RevieweeData, onLogou
     ];
 
     return subjects.map(subj => {
-      const result = calculateRevieweeArea(revieweeData, subj.key, gradeWeights);
+      const result = calculateRevieweeArea(revieweeData, subj.key, gradeWeights, "include", undefined, allUsers, allScoreFolders);
       const categories: GradeCategoryKey[] = ["preboard", "pretest", "posttest", "quiz", "dailyEvaluation", "removal", "diagnostic"];
       const actualCount = categories.reduce((c, cat) => getResolvedScore(revieweeData, cat, subj.key) !== null ? c + 1 : c, 0);
       return {
         key: subj.key,
         area: subj.label,
         title: areaTitleMap[subj.label] || subj.label,
-        percent: result.percentage,
+        percent: result.percentage ?? 0,
         count: actualCount,
         subtitle: `${actualCount} ${actualCount === 1 ? 'evaluation' : 'evaluations'} encoded`
       };
     });
-  }, [revieweeData, gradeWeights]);
+  }, [revieweeData, gradeWeights, allScoreFolders]);
 
   const latestResultsItems = useMemo(() => scores.slice(-5).reverse().map((s, idx) => ({
     id: `${s.date}-${idx}`,

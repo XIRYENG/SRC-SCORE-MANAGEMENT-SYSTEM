@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { Trophy, Medal, Search, Star, Award, Crown, User, TrendingUp, TrendingDown, Minus, Filter } from 'lucide-react';
 import { getResolvedDetailedScore } from '../utils/scoreFieldResolver';
 import { isValidRevieweeRecord } from '../services/userIdentityResolver';
+import { UserAvatar } from './UserAvatar';
 
 const CATEGORIES = [
   { label: 'Diagnostic', value: 'diagnostic' },
@@ -248,14 +249,11 @@ export const LeaderboardDashboard: React.FC<LeaderboardDashboardProps> = ({ user
                       </td>
                       <td className="px-6 py-5">
                         <div className="flex items-center gap-4">
-                          <div className={`w-10 h-10 rounded-2xl flex items-center justify-center text-xs font-black shadow-inner ${
-                            rank === 1 ? 'bg-amber-100 text-amber-700' : 
-                            rank === 2 ? 'bg-slate-100 text-slate-700' : 
-                            rank === 3 ? 'bg-amber-50 text-amber-900' : 
-                            'bg-slate-50 dark:bg-slate-800 text-slate-400'
-                          }`}>
-                            {user.first_name?.[0]}{user.middle_name?.[0] || user.last_name?.[0]}
-                          </div>
+                          <UserAvatar
+                            photoURL={user.photo_url || user.photoUrl || (user as any).photoURL}
+                            size={40}
+                            className="w-10 h-10 rounded-full object-cover border border-slate-200 bg-white shrink-0 shadow-sm"
+                          />
                           <div>
                             <p className="text-sm font-black text-slate-900 dark:text-slate-100 uppercase tracking-tight group-hover:text-blue-600 transition-colors">
                               {user.last_name}, {user.first_name} {user.middle_name || ''}

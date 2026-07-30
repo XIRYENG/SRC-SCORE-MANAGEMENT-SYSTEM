@@ -271,7 +271,7 @@ export const SyncModal: React.FC<SyncModalProps> = ({
         return [savedSingle];
       }
     }
-    return ['Diagnostic'];
+    return [];
   });
 
   useEffect(() => {
@@ -446,8 +446,20 @@ export const SyncModal: React.FC<SyncModalProps> = ({
   const [updatingUser, setUpdatingUser] = useState(false);
   
   // New tab state
-  const [activeTabState, setActiveTabRaw] = useState<'details' | 'scores' | 'import_scores' | 'archived' | 'deleted' | 'leaderboard' | 'activity'>(initialTab || 'details');
+  const [activeTabState, setActiveTabRaw] = useState<'details' | 'scores' | 'import_scores' | 'archived' | 'deleted' | 'leaderboard' | 'activity'>(() => {
+    if (typeof window !== 'undefined') {
+      const savedTab = localStorage.getItem('lastActiveTab');
+      if (savedTab) return savedTab as any;
+    }
+    return initialTab || 'details';
+  });
   const [targetTabState, setTargetTabState] = useState<'details' | 'scores' | 'import_scores' | 'archived' | 'deleted' | 'leaderboard' | 'activity'>(initialTab || 'details');
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('lastActiveTab', activeTabState);
+    }
+  }, [activeTabState]);
 
   const showMapping = embeddedMode ? (initialSection === 'mapping') : showMappingState;
   const showDuplicates = embeddedMode ? (initialSection === 'duplicates') : showDuplicatesState;

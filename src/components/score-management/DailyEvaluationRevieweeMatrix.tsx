@@ -4,6 +4,7 @@ import { Check, Info, MoreVertical, Eye, Pencil, ChevronDown, CheckCircle2, X, R
 import { CurriculumSubject, getSubjectsByArea, MajorAreaCode, MAJOR_AREAS } from '../../config/criminologyCurriculum';
 import { calculateDailyEvaluationAggregate } from '../../lib/dailyEvaluationCalculations';
 import { RevieweeData } from '../../types';
+import { UserAvatar } from '../UserAvatar';
 
 function normalizeDateString(dateStr: any): string {
   if (!dateStr) return '';
@@ -607,8 +608,15 @@ export function DailyEvaluationRevieweeMatrix({
                     </td>
 
                     {/* Reviewee Name */}
-                    <td className="px-3 py-3 sticky left-[150px] bg-white z-20 font-bold text-slate-900 border-r border-slate-100 shadow-[2px_0_4px_rgba(0,0,0,0.04)] truncate max-w-[200px]">
-                      {getFormattedName(user) || user.name || 'Unnamed Reviewee'}
+                    <td className="px-3 py-3 sticky left-[150px] bg-white z-20 font-bold text-slate-900 border-r border-slate-100 shadow-[2px_0_4px_rgba(0,0,0,0.04)] max-w-[220px]">
+                      <div className="flex items-center gap-2">
+                        <UserAvatar
+                          photoURL={user.photo_url || user.photoUrl || (user as any).photoURL}
+                          size={24}
+                          className="w-6 h-6 rounded-full object-cover border border-slate-200 bg-white shrink-0"
+                        />
+                        <span className="truncate">{getFormattedName(user) || user.name || 'Unnamed Reviewee'}</span>
+                      </div>
                     </td>
 
                     {/* Subject Cells */}

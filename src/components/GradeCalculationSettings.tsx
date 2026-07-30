@@ -12,10 +12,14 @@ import { Save, RotateCcw, AlertTriangle, CheckCircle2, Sliders } from "lucide-re
 
 export function GradeCalculationSettings() {
   const [weights, setWeights] = useState<GradeWeights>(DEFAULT_GRADE_WEIGHTS);
+  const [savedWeights, setSavedWeights] = useState<GradeWeights>(DEFAULT_GRADE_WEIGHTS);
+  const [noScoreHandling, setNoScoreHandling] = useState<'include' | 'exclude'>('include');
+  const [savedNoScoreHandling, setSavedNoScoreHandling] = useState<'include' | 'exclude'>('include');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
 
   useEffect(() => {
     if (!firestoreDb) {
@@ -30,22 +34,30 @@ export function GradeCalculationSettings() {
         if (snapshot.exists()) {
           const data = snapshot.data();
           if (data && data.weights) {
-            // Merge loaded weights with defaults to ensure all keys are present
             const merged = { ...DEFAULT_GRADE_WEIGHTS, ...data.weights };
             setWeights(merged);
+            setSavedWeights(merged);
+          }
+          if (data && data.noScoreHandling) {
+            setNoScoreHandling(data.noScoreHandling);
+            setSavedNoScoreHandling(data.noScoreHandling);
           }
         }
         setLoading(false);
       },
       (err) => {
         console.error("Failed to fetch grade weights:", err);
-        setErrorMsg("Failed to load grade weights from database.");
+        setErrorMsg("Failed to load grade settings from database.");
         setLoading(false);
       }
     );
 
     return () => unsubscribe();
   }, []);
+
+  const hasUnsavedChanges = useMemo(() => {
+    return JSON.stringify(weights) !== JSON.stringify(savedWeights) || noScoreHandling !== savedNoScoreHandling;
+  }, [weights, savedWeights, noScoreHandling, savedNoScoreHandling]);
 
   const handleWeightChange = (key: GradeCategoryKey, value: string) => {
     setErrorMsg(null);
@@ -61,32 +73,39 @@ export function GradeCalculationSettings() {
     return validateGradeWeights(weights);
   }, [weights]);
 
-  const handleSave = async () => {
+  const handleSave = () => {
     if (!validation.valid) {
       setErrorMsg(validation.errors[0] || "Invalid weights configuration.");
       return;
     }
+    setShowConfirmModal(true);
+  };
 
+  const executeSave = async () => {
+    setShowConfirmModal(false);
     setSaving(true);
     setErrorMsg(null);
     setSuccessMsg(null);
 
     try {
       if (!firestoreDb) {
-        throw new Error("Firestore is database is not loaded.");
+        throw new Error("Firestore database is not loaded.");
       }
 
       const docRef = doc(firestoreDb, "system_settings", "grade_calculation");
       await setDoc(docRef, {
         weights,
+        noScoreHandling,
         updatedAt: new Date().toISOString(),
       });
 
-      setSuccessMsg("Grade weights saved successfully!");
-      setTimeout(() => setSuccessMsg(null), 4000);
+      setSavedWeights(weights);
+      setSavedNoScoreHandling(noScoreHandling);
+      setSuccessMsg("Grade calculation settings saved and applied successfully!");
+      setTimeout(() => setSuccessMsg(null), 5000);
     } catch (err: any) {
-      console.error("Error saving weights:", err);
-      setErrorMsg(err?.message || "Failed to save weights.");
+      console.error("Error saving settings:", err);
+      setErrorMsg(err?.message || "Failed to save settings.");
     } finally {
       setSaving(false);
     }
@@ -214,6 +233,47 @@ export function GradeCalculationSettings() {
 
             <div className="space-y-2">
               <h4 className="text-[10px] font-black uppercase tracking-wider text-slate-400 text-left">
+                No-Score Reviewee Handling
+              </h4>
+              <div className="flex flex-col gap-2">
+                <button
+                  onClick={() => setNoScoreHandling('include')}
+                  className={`flex items-center gap-3 rounded-xl border p-3 text-left transition ${
+                    noScoreHandling === 'include'
+                      ? 'border-slate-900 bg-slate-900 text-white dark:border-white dark:bg-white dark:text-slate-900'
+                      : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-400'
+                  }`}
+                >
+                  <div className={`h-4 w-4 rounded-full border-2 flex items-center justify-center ${noScoreHandling === 'include' ? 'border-white dark:border-slate-900' : 'border-slate-300'}`}>
+                    {noScoreHandling === 'include' && <div className="h-2 w-2 rounded-full bg-white dark:bg-slate-900" />}
+                  </div>
+                  <div>
+                    <span className="text-xs font-bold block">Include as 0.00%</span>
+                    <span className="text-[10px] opacity-70">Missing scores count as 0 in aggregates</span>
+                  </div>
+                </button>
+
+                <button
+                  onClick={() => setNoScoreHandling('exclude')}
+                  className={`flex items-center gap-3 rounded-xl border p-3 text-left transition ${
+                    noScoreHandling === 'exclude'
+                      ? 'border-slate-900 bg-slate-900 text-white dark:border-white dark:bg-white dark:text-slate-900'
+                      : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-400'
+                  }`}
+                >
+                  <div className={`h-4 w-4 rounded-full border-2 flex items-center justify-center ${noScoreHandling === 'exclude' ? 'border-white dark:border-slate-900' : 'border-slate-300'}`}>
+                    {noScoreHandling === 'exclude' && <div className="h-2 w-2 rounded-full bg-white dark:bg-slate-900" />}
+                  </div>
+                  <div>
+                    <span className="text-xs font-bold block">Exclude from aggregate</span>
+                    <span className="text-[10px] opacity-70">Denominator only includes valid scores</span>
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <h4 className="text-[10px] font-black uppercase tracking-wider text-slate-400 text-left">
                 Rules & Validation
               </h4>
               <ul className="text-xs font-semibold text-slate-500 space-y-1.5 list-disc pl-4 text-left">
@@ -241,6 +301,99 @@ export function GradeCalculationSettings() {
           </div>
         </div>
       </div>
+
+      {/* Floating Unsaved Changes Confirmation Card */}
+      {hasUnsavedChanges && (
+        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-4 rounded-2xl border border-slate-200 bg-slate-900 text-white px-5 py-4 shadow-2xl dark:border-slate-700 dark:bg-slate-950 animate-bounce-short">
+          <div className="flex items-center gap-2.5">
+            <div className="h-2.5 w-2.5 rounded-full bg-amber-400 animate-pulse" />
+            <span className="text-xs font-bold">You have unsaved weight changes</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setWeights(savedWeights)}
+              className="rounded-xl border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-bold text-slate-300 hover:bg-slate-700 transition cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={saving || !validation.valid}
+              className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-black uppercase tracking-wide text-white hover:bg-emerald-500 transition cursor-pointer disabled:opacity-50"
+            >
+              {saving ? "Saving..." : "Confirm Save"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation Modal for Saving Settings */}
+      {showConfirmModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4">
+          <div className="w-full max-w-lg rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 shadow-2xl space-y-5 animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-4">
+              <h3 className="text-base font-black uppercase text-slate-900 dark:text-white flex items-center gap-2">
+                <AlertTriangle size={18} className="text-amber-500" /> Confirm Grade Weight Changes?
+              </h3>
+              <button
+                onClick={() => setShowConfirmModal(false)}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 font-black text-lg"
+              >
+                &times;
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+                You are about to update the official category weights for all reviewees and dashboards. Please review the changes:
+              </p>
+
+              <div className="max-h-60 overflow-y-auto rounded-2xl border border-slate-100 dark:border-slate-800 p-3 space-y-2 bg-slate-50/50 dark:bg-slate-950/50">
+                <div className="grid grid-cols-3 text-[10px] font-black uppercase tracking-wider text-slate-400 pb-1 border-b border-slate-200 dark:border-slate-800">
+                  <span>Category</span>
+                  <span className="text-center">Current</span>
+                  <span className="text-right">New</span>
+                </div>
+                {(Object.keys(DEFAULT_GRADE_WEIGHTS) as GradeCategoryKey[]).map((key) => {
+                  const currentVal = savedWeights[key] || 0;
+                  const newVal = weights[key] || 0;
+                  const changed = currentVal !== newVal;
+                  return (
+                    <div key={key} className={`grid grid-cols-3 items-center text-xs py-1.5 px-2 rounded-xl ${changed ? 'bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50' : ''}`}>
+                      <span className="font-bold text-slate-800 dark:text-slate-200">{GRADE_CATEGORY_LABELS[key]}</span>
+                      <span className="text-center font-medium text-slate-500">{currentVal}%</span>
+                      <span className={`text-right font-black ${changed ? 'text-amber-600 dark:text-amber-400' : 'text-slate-900 dark:text-white'}`}>{newVal}%</span>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="flex items-center justify-between rounded-xl bg-slate-100 dark:bg-slate-800/60 p-3 text-xs font-bold text-slate-700 dark:text-slate-300">
+                <span>Total New Weight</span>
+                <span className={`font-black ${Math.abs(validation.total - 100) < 0.001 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600'}`}>
+                  {validation.total.toFixed(1)}% (Must be 100%)
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2 border-t border-slate-100 dark:border-slate-800">
+              <button
+                onClick={() => setShowConfirmModal(false)}
+                className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-black uppercase tracking-wide text-slate-700 hover:bg-slate-50 transition cursor-pointer dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={executeSave}
+                disabled={saving || !validation.valid}
+                className="rounded-xl bg-emerald-600 px-5 py-2.5 text-xs font-black uppercase tracking-wide text-white hover:bg-emerald-500 transition cursor-pointer disabled:opacity-50 shadow-md"
+              >
+                {saving ? "Saving..." : "Confirm & Save"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

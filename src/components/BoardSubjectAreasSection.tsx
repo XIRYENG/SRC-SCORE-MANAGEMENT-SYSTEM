@@ -6,6 +6,8 @@ export type BoardAreaCardData = {
   area: string;
   title: string;
   percent: number;
+  weight?: number;
+  overallContribution?: number;
   count: number;
   onClick: () => void;
 };
@@ -144,12 +146,30 @@ export function BoardSubjectAreasSection({
               </div>
 
               {/* Status */}
-              <p className={`mt-5 min-h-[56px] text-xl font-bold leading-tight ${statusColorClass}`}>
+              <p className={`mt-5 min-h-[48px] text-xl font-bold leading-tight ${statusColorClass}`}>
                 {statusText}
               </p>
 
+              {/* Weight & Contribution Box */}
+              <div className="mt-3 w-full rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-100 dark:border-slate-800 p-2.5 text-xs font-semibold text-slate-600 dark:text-slate-300 space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] text-slate-400 dark:text-slate-500" title="Area Weight is the percentage this Major Area contributes to the Reviewee's Overall Grade after category weights calculate the Area Rating.">
+                    Area Weight:
+                  </span>
+                  <span className="font-bold text-slate-900 dark:text-white">{item.weight ?? 20}%</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] text-slate-400 dark:text-slate-500" title="Overall Grade Contribution = Area Rating × Area Weight / 100">
+                    Contribution:
+                  </span>
+                  <span className="font-black text-teal-700 dark:text-teal-400">
+                    {item.overallContribution !== undefined ? `${item.overallContribution.toFixed(2)}%` : `${((safePercentage * (item.weight ?? 20)) / 100).toFixed(2)}%`}
+                  </span>
+                </div>
+              </div>
+
               {/* Evaluation Count */}
-              <p className="mt-2 text-sm text-slate-400 dark:text-slate-500 font-semibold">
+              <p className="mt-2 text-xs text-slate-400 dark:text-slate-500 font-semibold">
                 {evalCountLabel}
               </p>
 

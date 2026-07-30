@@ -201,3 +201,39 @@ export function formatFolderScopeDisplay(folder: ScoreFolder): {
     branchesDetail,
   };
 }
+
+export function normalizeFolderType(type?: string): string {
+  if (!type) return 'phase_1';
+  const clean = type.toLowerCase().trim().replace(/[\s-]+/g, '_');
+  if (['phase_1', 'phase1', 'phase_1_eval'].includes(clean)) return 'phase_1';
+  if (['phase_2', 'phase2'].includes(clean)) return 'phase_2';
+  if (['phase_3', 'phase3'].includes(clean)) return 'phase_3';
+  if (['marathon'].includes(clean)) return 'marathon';
+  if (['final_coaching', 'finalcoaching'].includes(clean)) return 'final_coaching';
+  if (['pre_board_series', 'preboard', 'preboardseries', 'pre_board'].includes(clean)) return 'pre_board_series';
+  if (['custom'].includes(clean)) return 'custom';
+  return type;
+}
+
+export function formatFolderType(type?: string): string {
+  if (!type) return 'Custom';
+  const clean = type.toLowerCase().trim().replace(/[\s-]+/g, '_');
+  switch (clean) {
+    case 'phase_1':
+      return 'Phase 1';
+    case 'phase_2':
+      return 'Phase 2';
+    case 'phase_3':
+      return 'Phase 3';
+    case 'marathon':
+      return 'Marathon';
+    case 'final_coaching':
+      return 'Final Coaching';
+    case 'pre_board_series':
+      return 'Pre-Board Series';
+    case 'custom':
+      return 'Custom';
+    default:
+      return type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  }
+}

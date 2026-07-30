@@ -6,7 +6,7 @@ import { normalizeScoreCategory, normalizeScoreSubject, getResolvedDetailedScore
 import { getScoreLabel, getScoreColor } from '../DashboardShared';
 import { calculateAggregatedAreaRating } from '../../lib/scoreCalculations';
 import { ScoreRecord } from '../../utils/scoreParser';
-import { RevieweeData, ScoreFolder } from '../../types';
+import { RevieweeData, ScoreFolder, ScoreManagementViewPreference } from '../../types';
 import { useScoreFolders } from '../../hooks/useScoreFolders';
 import { isRevieweeInFolderScope, formatFolderScopeDisplay } from '../../utils/folderScope';
 import { CompactEditableScoreCell } from '../CompactEditableScoreCell';
@@ -19,6 +19,7 @@ import { isValidUserRecord, resolveCanonicalUserIdentity, compareUsersAlphabetic
 import { AnimatedSelect } from '../ui/animated-select';
 import { AnimatedDatePicker } from '../ui/animated-date-picker';
 import { ConfirmActionModal } from '../ConfirmActionModal';
+import { UserAvatar } from '../UserAvatar';
 
 type ScoreManagementDashboardProps = {
   onViewDetails?: (user: RevieweeData) => void;
@@ -28,6 +29,8 @@ type ScoreManagementDashboardProps = {
   scoreFolderId?: string;
   scoreFolderName?: string;
   scoreFolder?: ScoreFolder | null;
+  initialPreference?: ScoreManagementViewPreference;
+  onPreferenceChange?: (updates: Partial<ScoreManagementViewPreference>) => void;
 };
 
 const SUBJECTS_BY_AREA: Record<string, { code: string; title: string }[]> = {
@@ -288,7 +291,7 @@ function getUnifiedScore(user: any, category: string, subject: string, selectedD
   };
 }
 
-export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onOpenSyncModal, currentUser, scoreFolderId, scoreFolderName, scoreFolder }: ScoreManagementDashboardProps) {
+export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onOpenSyncModal, currentUser, scoreFolderId, scoreFolderName, scoreFolder, initialPreference, onPreferenceChange }: ScoreManagementDashboardProps) {
   const { allUsers, loading } = useFirestoreUsers();
   const { folders: allScoreFolders } = useScoreFolders();
   
@@ -357,15 +360,28 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
   const [showArchived, setShowArchived] = useState(false);
   const [hiddenSubjectIds, setHiddenSubjectIds] = useState<Set<string>>(new Set());
   const [showColumnSelector, setShowColumnSelector] = useState(false);
-  const [selectedCategory, setSelectedCategory] = useState('Daily Evaluation');
-  const [selectedDate, setSelectedDate] = useState('All Dates');
-  const [selectedSchool, setSelectedSchool] = useState('All Schools');
-  const [selectedBranch, setSelectedBranch] = useState('All Branches');
-  const [selectedMajorArea, setSelectedMajorArea] = useState('CLJ');
+  const [selectedCategory, setSelectedCategory] = useState(initialPreference?.categoryId || 'Daily Evaluation');
+  const [selectedDate, setSelectedDate] = useState(initialPreference?.evaluationDate || 'All Dates');
+  const [selectedSchool, setSelectedSchool] = useState(initialPreference?.schoolId || 'All Schools');
+  const [selectedBranch, setSelectedBranch] = useState(initialPreference?.branchId || 'All Branches');
+  const [selectedMajorArea, setSelectedMajorArea] = useState(initialPreference?.majorAreaId || 'CLJ');
   const [sortField, setSortField] = useState('name');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const [showFilters, setShowFilters] = useState(false);
   const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (onPreferenceChange) {
+      onPreferenceChange({
+        categoryId: selectedCategory,
+        majorAreaId: selectedMajorArea,
+        evaluationDate: selectedDate,
+        schoolId: selectedSchool,
+        branchId: selectedBranch,
+      });
+    }
+  }, [selectedCategory, selectedMajorArea, selectedDate, selectedSchool, selectedBranch, onPreferenceChange]);
+
 
   // Firestore branches collection state
   const [firestoreBranches, setFirestoreBranches] = useState<{ id: string; name: string }[]>([]);
@@ -466,15 +482,16 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
       const userDocId = user.doc_id || user.uid || user.id;
       if (!userDocId) throw new Error("User ID not found");
 
-      const scoreNum = Number(newScoreInput);
+      const isEmpty = newScoreInput.trim() === '';
+      const scoreNum = isEmpty ? null : Number(newScoreInput);
       const totalNum = Number(newTotalInput) || 100;
-      if (isNaN(scoreNum)) {
-        alert("Please enter a valid numeric score.");
+      if (!isEmpty && isNaN(scoreNum as number)) {
+        alert("Please enter a valid numeric score or leave blank to remove.");
         setSavingScore(false);
         return;
       }
 
-      if (scoreNum < 0 || scoreNum > totalNum) {
+      if (!isEmpty && (scoreNum! < 0 || scoreNum! > totalNum)) {
         alert(`Score must be between 0 and ${totalNum}.`);
         setSavingScore(false);
         return;
@@ -493,41 +510,53 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
           ? normalizeIndividualSubjectCode(subject)
           : String(event.majorAreaId || '').toLowerCase();
 
-        await updateDoc(userRef, {
-          [fieldName]: scoreNum,
+        const updates: any = {
+          [fieldName]: isEmpty ? null : scoreNum,
           [`${fieldName}_total`]: totalNum,
-          [`scoresByDate.${scoreRecordKey}`]: {
-            scoreEventId: event.id,
-            category: category,
-            categoryKey: normalizedCategoryKey,
-            score: scoreNum,
-            rawScore: scoreNum,
-            earnedPoints: scoreNum,
-            possiblePoints: totalNum,
-            percentage: (scoreNum / totalNum) * 100,
-            date: evaluationDate,
-            source: 'manual_entry',
-            remarks: 'Manually Entered Score',
-            updatedAt: new Date().toISOString()
-          },
-          [`assessmentRecords.${event.id}`]: {
-            scoreEventId: event.id,
-            category: category,
-            date: evaluationDate,
-            score: scoreNum,
-            totalScore: totalNum,
-            subject: subject,
-            subjectCode: subjectId,
-            scoreFolderId: scoreFolderId || "main",
-            publicationStatus: event.publicationStatus || 'published',
-            updatedAt: new Date().toISOString()
-          },
           last_score_update: serverTimestamp(),
           updated_at: new Date().toISOString()
-        });
+        };
+
+        if (isEmpty) {
+            updates[`scoresByDate.${scoreRecordKey}.score`] = null;
+            updates[`scoresByDate.${scoreRecordKey}.rawScore`] = null;
+            updates[`scoresByDate.${scoreRecordKey}.earnedPoints`] = null;
+            updates[`scoresByDate.${scoreRecordKey}.percentage`] = null;
+            
+            updates[`assessmentRecords.${event.id}.score`] = null;
+        } else {
+            updates[`scoresByDate.${scoreRecordKey}`] = {
+              scoreEventId: event.id,
+              category: category,
+              categoryKey: normalizedCategoryKey,
+              score: scoreNum,
+              rawScore: scoreNum,
+              earnedPoints: scoreNum,
+              possiblePoints: totalNum,
+              percentage: (scoreNum! / totalNum) * 100,
+              date: evaluationDate,
+              source: 'manual_entry',
+              remarks: 'Manually Entered Score',
+              updatedAt: new Date().toISOString(),
+              folderId: scoreFolderId || "main"
+            };
+            updates[`assessmentRecords.${event.id}`] = {
+              scoreEventId: event.id,
+              category: category,
+              date: evaluationDate,
+              score: scoreNum,
+              totalScore: totalNum,
+              subject: subject,
+              subjectCode: subjectId,
+              scoreFolderId: scoreFolderId || "main",
+              publicationStatus: event.publicationStatus || 'published',
+              updatedAt: new Date().toISOString()
+            };
+        }
+        await updateDoc(userRef, updates);
       } else {
         await updateDoc(userRef, {
-          [fieldName]: scoreNum,
+          [fieldName]: isEmpty ? null : scoreNum,
           [`${fieldName}_total`]: totalNum,
           last_score_update: serverTimestamp(),
           updated_at: new Date().toISOString()
@@ -1954,7 +1983,14 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap font-medium text-blue-600">{user.id_number || user.seqId || user.seq_id || user.idNumber || user.revieweeId || user.id || '-'}</td>
                         <td className="px-4 py-3 font-medium text-slate-700">
-                          {formatFormalName(resolveCanonicalUserIdentity(user))}
+                          <div className="flex items-center gap-2">
+                            <UserAvatar
+                              photoURL={user.photo_url || user.photoUrl || user.photoURL}
+                              size={28}
+                              className="w-7 h-7 rounded-full object-cover border border-slate-200 bg-white shrink-0"
+                            />
+                            <span>{formatFormalName(resolveCanonicalUserIdentity(user))}</span>
+                          </div>
                         </td>
                         {subjScores.map((s: any, i: number) => {
                           const subjObj = displayedSubjects[i];

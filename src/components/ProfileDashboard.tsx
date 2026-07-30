@@ -158,15 +158,16 @@ export const ProfileDashboard: React.FC<ProfileDashboardProps> = ({ currentUser,
         
         {/* Avatar Upload Container */}
         <div className="relative group shrink-0">
-          <div className="w-28 h-28 sm:w-32 sm:h-32 rounded-3xl border-4 border-white/20 overflow-hidden bg-slate-800 shadow-2xl flex items-center justify-center">
+          <div className="w-36 h-36 sm:w-40 sm:h-40 rounded-full overflow-hidden bg-slate-800 shadow-2xl flex items-center justify-center">
             <UserAvatar 
               photoURL={photoUrl} 
               altText={`${firstName} ${lastName}`} 
+              size={160}
               className="w-full h-full object-cover" 
             />
           </div>
-          <label className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-3xl flex flex-col items-center justify-center cursor-pointer text-white text-xs font-bold gap-1">
-            <Camera size={20} />
+          <label className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity rounded-full flex flex-col items-center justify-center cursor-pointer text-white text-xs font-bold gap-1">
+            <Camera size={22} />
             <span>Change Photo</span>
             <input type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
           </label>

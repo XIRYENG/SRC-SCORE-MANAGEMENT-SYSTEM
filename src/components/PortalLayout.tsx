@@ -75,8 +75,8 @@ const DesktopSidebar = React.memo(({
             <UserAvatar 
               photoURL={photoURL} 
               altText={roleDetail || role} 
-              size={32} 
-              className="h-8 w-8 rounded-full border border-white shadow-sm" 
+              size={36} 
+              className="h-9 w-9 rounded-full object-cover shrink-0" 
             />
             <div className="min-w-0">
               <p className="truncate text-[11px] font-black text-slate-900 uppercase">
@@ -399,8 +399,8 @@ export function PortalLayout({
                 <UserAvatar 
                   photoURL={photoURL} 
                   altText={roleDetail || role} 
-                  size={36} 
-                  className="h-8 w-8 lg:h-9 lg:w-9 rounded-xl object-cover border border-slate-100 bg-white shadow-sm" 
+                  size={40} 
+                  className="h-9 w-9 lg:h-10 lg:w-10 rounded-full object-cover shrink-0" 
                 />
                 <div className="hidden lg:block">
                   <p className="text-xs font-black leading-none uppercase">

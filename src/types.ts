@@ -125,4 +125,18 @@ export interface RevieweeData {
     isArchived?: boolean;
     isPublished?: boolean;
   }>;
+  scoresByDate?: Record<string, any>;
 }
+
+export type ScoreManagementViewPreference = {
+  folderId: string | null;
+  categoryId: string | null;
+  majorAreaId: string | null;
+  subjectId: string | null;
+  evaluationDate: string | null;
+  schoolId: string | null;
+  branchId: string | null;
+  publicationStatus: string | null;
+  viewMode: string | null;
+  updatedAt?: any;
+};

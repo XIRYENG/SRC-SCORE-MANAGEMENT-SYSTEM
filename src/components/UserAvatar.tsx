@@ -12,7 +12,7 @@ export const UserAvatar: React.FC<UserAvatarProps> = ({
   photoURL,
   altText = "User Avatar",
   size,
-  className = "w-10 h-10 rounded-3xl object-cover border-2 border-slate-200 bg-white shadow-sm"
+  className = "w-10 h-10 rounded-full object-cover bg-slate-100 dark:bg-slate-800 shrink-0"
 }) => {
   const [hasError, setHasError] = useState(false);
 

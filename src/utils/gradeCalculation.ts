@@ -15,6 +15,8 @@ export type SubjectArea =
   | "crim"
   | "ca";
 
+export const SUBJECT_AREA_KEYS: SubjectArea[] = ["clj", "lea", "cdi", "fs", "crim", "ca"];
+
 export type GradeWeights = Record<
   GradeCategoryKey,
   number
@@ -182,29 +184,35 @@ export type WeightedCategoryResult = {
 export function calculateWeightedAreaPerformance(
   categoryScores: CategoryScores,
   weights: GradeWeights,
+  noScoreHandling: 'include' | 'exclude' = 'include'
 ): {
   percentage: number;
   breakdown: WeightedCategoryResult[];
 } {
-  const takenCategories = CATEGORY_KEYS.filter(
+  const categories = CATEGORY_KEYS;
+  
+  const takenCategories = categories.filter(
     category =>
       categoryScores[category] !== null &&
       categoryScores[category] !== undefined,
   );
 
-  const totalTakenWeight = takenCategories.reduce(
-    (total, category) => total + (Number(weights[category]) || 0),
-    0,
-  );
+  const totalTakenWeight = noScoreHandling === 'exclude'
+    ? takenCategories.reduce((total, category) => total + (Number(weights[category]) || 0), 0)
+    : categories.reduce((total, category) => total + (Number(weights[category]) || 0), 0);
 
-  const breakdown = CATEGORY_KEYS.map(category => {
-    const score = clampPercentage(categoryScores[category] ?? 0);
-
+  const breakdown = categories.map(category => {
+    const scoreValue = categoryScores[category];
+    const hasScore = scoreValue !== null && scoreValue !== undefined;
+    
+    const score = clampPercentage(scoreValue ?? 0);
     const weight = Math.max(0, Number(weights[category]) || 0);
 
-    // Only contribute if category was taken and has a weight
+    // Only contribute if category was taken OR if we are including no-scores as 0%
+    const shouldContribute = noScoreHandling === 'include' || hasScore;
+    
     const contribution =
-      totalTakenWeight > 0 && takenCategories.includes(category)
+      totalTakenWeight > 0 && shouldContribute
         ? score * (weight / totalTakenWeight)
         : 0;
 
@@ -234,24 +242,24 @@ export function calculateWeightedAreaPerformance(
 }
 
 export function calculateDashboardAreaAverage(
-  revieweePercentages: number[],
+  revieweePercentages: (number | null)[],
+  noScoreHandling: 'include' | 'exclude' = 'include'
 ): number {
-  const validPercentages =
-    revieweePercentages.filter(
-      percentage =>
-        Number.isFinite(percentage),
-    );
+  const validPercentages = revieweePercentages.filter(p => p !== null && Number.isFinite(p)) as number[];
 
-  if (validPercentages.length === 0) {
-    return 0;
+  if (noScoreHandling === 'exclude') {
+    if (validPercentages.length === 0) return 0;
+    return clampPercentage(
+      validPercentages.reduce((total, p) => total + p, 0) / validPercentages.length,
+    );
   }
 
+  // Include as 0.00% means we count all reviewees (the input should include 0 for those with no scores)
+  const allPercentages = revieweePercentages.map(p => p ?? 0);
+  if (allPercentages.length === 0) return 0;
+  
   return clampPercentage(
-    validPercentages.reduce(
-      (total, percentage) =>
-        total + percentage,
-      0,
-    ) / validPercentages.length,
+    allPercentages.reduce((total, p) => total + p, 0) / allPercentages.length,
   );
 }
 

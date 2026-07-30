@@ -53,13 +53,13 @@ export function clampPercentage(value: unknown): number {
 export function calculateScorePercentage(
   earnedScore: number | null | undefined,
   totalItems: number | null | undefined
-): number {
+): number | null {
   if (
     earnedScore === null ||
     earnedScore === undefined ||
     String(earnedScore).trim() === ""
   ) {
-    return 0;
+    return null;
   }
 
   const earned = Number(earnedScore);
@@ -83,7 +83,7 @@ export function calculateScorePercentage(
 export function getScorePercentage(
   earnedScore: number | null | undefined,
   possiblePoints: number | null | undefined
-): number {
+): number | null {
   return calculateScorePercentage(earnedScore, possiblePoints);
 }
 
@@ -117,7 +117,7 @@ export function calculateAreaContribution(
     };
   }
 
-  const rawPercentage = calculateScorePercentage(earned, validPossiblePoints);
+  const rawPercentage = calculateScorePercentage(earned, validPossiblePoints) ?? 0;
   const weightedContribution = rawPercentage * (subjectWeight / 100);
 
   return {
@@ -144,7 +144,7 @@ export function getCategoryScores(
 ): SubjectPercentages {
   const getSubjPercentage = (subj: SubjectKey) => {
     const detailed = getResolvedDetailedScore(reviewee, category, subj);
-    return calculateScorePercentage(detailed.earnedScore, detailed.possiblePoints);
+    return calculateScorePercentage(detailed.earnedScore, detailed.possiblePoints) ?? 0;
   };
 
   return {
@@ -227,12 +227,12 @@ export function calculateRatingFromDetailedScores(
   rating: number;
 } {
   const percentages: SubjectPercentages = {
-    clj: calculateScorePercentage(scores.clj?.earnedScore, scores.clj?.possiblePoints),
-    lea: calculateScorePercentage(scores.lea?.earnedScore, scores.lea?.possiblePoints),
-    crim: calculateScorePercentage(scores.crim?.earnedScore, scores.crim?.possiblePoints),
-    cdi: calculateScorePercentage(scores.cdi?.earnedScore, scores.cdi?.possiblePoints),
-    fs: calculateScorePercentage(scores.fs?.earnedScore, scores.fs?.possiblePoints),
-    ca: calculateScorePercentage(scores.ca?.earnedScore, scores.ca?.possiblePoints),
+    clj: calculateScorePercentage(scores.clj?.earnedScore, scores.clj?.possiblePoints) ?? 0,
+    lea: calculateScorePercentage(scores.lea?.earnedScore, scores.lea?.possiblePoints) ?? 0,
+    crim: calculateScorePercentage(scores.crim?.earnedScore, scores.crim?.possiblePoints) ?? 0,
+    cdi: calculateScorePercentage(scores.cdi?.earnedScore, scores.cdi?.possiblePoints) ?? 0,
+    fs: calculateScorePercentage(scores.fs?.earnedScore, scores.fs?.possiblePoints) ?? 0,
+    ca: calculateScorePercentage(scores.ca?.earnedScore, scores.ca?.possiblePoints) ?? 0,
   };
 
   const contributions: SubjectPercentages = {

@@ -23,7 +23,10 @@ export function useScoreFolders() {
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const folderList: ScoreFolder[] = [];
       snapshot.forEach((doc) => {
-        folderList.push({ id: doc.id, ...doc.data() } as ScoreFolder);
+        const data = doc.data();
+        if (!data.isDeleted) {
+          folderList.push({ id: doc.id, ...data } as ScoreFolder);
+        }
       });
       setFolders(folderList);
       setLoading(false);

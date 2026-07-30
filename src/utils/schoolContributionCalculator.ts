@@ -1,5 +1,7 @@
 import { GradeWeights, GradeCategoryKey } from './gradeCalculation';
-import { getResolvedDetailedScore } from './scoreFieldResolver';
+import { getResolvedDetailedScore, normalizeScoreCategory, normalizeScoreSubject } from './scoreFieldResolver';
+import { getSchoolDisplayName } from './schoolDisplayName';
+import { ScoreFolder } from '../types';
 
 export type SchoolContribution = {
   schoolId: string;
@@ -51,26 +53,26 @@ export function normalizeSchoolKey(name: string): { schoolId: string; schoolName
   const clean = upper.replace(/[^A-Z0-9]/g, '');
 
   let schoolId = clean;
-  let schoolName = trimmed;
+  let schoolName = getSchoolDisplayName({ normalizedName: clean, name: trimmed, schoolName: trimmed });
 
   if (clean.includes('CKCM') || clean.includes('CHRISTTHEKING')) {
     schoolId = 'CKCM';
-    schoolName = 'CKCM (Christ the King College de Maranding)';
-  } else if (clean.includes('LSSTI')) {
+    schoolName = getSchoolDisplayName({ code: 'CKCM', name: trimmed, normalizedName: clean, officialName: 'Christ the King College de Maranding, Inc.' });
+  } else if (clean.includes('LSSTI') || clean.includes('LANAOSCHOOL')) {
     schoolId = 'LSSTI';
-    schoolName = 'LSSTI';
-  } else if (clean.includes('NCMC')) {
+    schoolName = getSchoolDisplayName({ code: 'LSSTI', name: trimmed, normalizedName: clean });
+  } else if (clean.includes('NCMC') || clean.includes('NORTHCENTRAL')) {
     schoolId = 'NCMC';
-    schoolName = 'NCMC';
-  } else if (clean.includes('CDEK')) {
+    schoolName = getSchoolDisplayName({ code: 'NCMC', name: trimmed, normalizedName: clean });
+  } else if (clean.includes('CDEK') || clean.includes('COLEGIODE')) {
     schoolId = 'CDEK';
-    schoolName = 'CDEK';
-  } else if (clean.includes('SMC')) {
+    schoolName = getSchoolDisplayName({ code: 'CDEK', name: trimmed, normalizedName: clean });
+  } else if (clean.includes('SMC') || clean.includes('STMICHAEL')) {
     schoolId = 'SMC';
-    schoolName = 'SMC';
+    schoolName = getSchoolDisplayName({ code: 'SMC', name: trimmed, normalizedName: clean });
   } else {
     schoolId = clean || 'UNASSIGNED';
-    schoolName = trimmed;
+    schoolName = getSchoolDisplayName({ name: trimmed, normalizedName: clean });
   }
 
   return { schoolId, schoolName };
@@ -81,7 +83,8 @@ export function calculateMajorAreaContributionBreakdown(
   majorAreaCode: string,
   majorAreaTitle: string,
   gradeWeights: GradeWeights,
-  aggregationMethod: 'Reviewee-Weighted Average' | 'Equal School Average' = 'Reviewee-Weighted Average'
+  aggregationMethod: 'Reviewee-Weighted Average' | 'Equal School Average' = 'Reviewee-Weighted Average',
+  selectedFolders?: ScoreFolder[]
 ): MajorAreaContributionBreakdown {
   const categories: GradeCategoryKey[] = ['preboard', 'pretest', 'posttest', 'quiz', 'dailyEvaluation', 'removal', 'diagnostic'];
   const categoryLabels: Record<GradeCategoryKey, string> = {
@@ -124,9 +127,44 @@ export function calculateMajorAreaContributionBreakdown(
       const rId = r.doc_id || r.uid || r.id || r.seqId || Math.random().toString();
 
       // Check if valid score exists
-      const scoreObj = getResolvedDetailedScore(r, cat, majorAreaCode);
-      const earned = scoreObj.earnedScore;
-      const possible = scoreObj.possiblePoints;
+      let earned: number | null = null;
+      let possible: number = 0;
+
+      if (selectedFolders && selectedFolders.length > 0) {
+        let totalEarned = 0;
+        let totalPossible = 0;
+        let hasAnyScore = false;
+
+        selectedFolders.forEach(folder => {
+          const scoresByDate = (r as any).scoresByDate || {};
+          const folderScores = Object.values(scoresByDate).filter((s: any) => {
+            const entryFolder = s.folderId || s.scoreFolderId || "main";
+            return entryFolder === folder.id && 
+            normalizeScoreCategory(s.categoryKey || s.category) === normalizeScoreCategory(cat) &&
+            normalizeScoreSubject(s.subject) === normalizeScoreSubject(majorAreaCode)
+          });
+
+          folderScores.forEach((s: any) => {
+            const e = s.earnedPoints ?? s.rawScore ?? s.score;
+            const p = s.possiblePoints ?? s.totalItems ?? 100;
+
+            if (e !== null && e !== undefined && String(e).trim() !== "") {
+              totalEarned += Number(e);
+              totalPossible += Number(p);
+              hasAnyScore = true;
+            }
+          });
+        });
+
+        if (hasAnyScore && totalPossible > 0) {
+          earned = totalEarned;
+          possible = totalPossible;
+        }
+      } else {
+        const scoreObj = getResolvedDetailedScore(r, cat, majorAreaCode);
+        earned = scoreObj.earnedScore;
+        possible = scoreObj.possiblePoints;
+      }
 
       // Valid score rule: earned is valid finite number (including 0), possible > 0
       if (earned !== null && Number.isFinite(earned) && possible > 0) {

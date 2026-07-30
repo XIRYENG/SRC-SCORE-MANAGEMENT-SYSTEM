@@ -60,15 +60,19 @@ export function DetailedEditableScoreCell({
 
   const isDailyEval = String(category || "").toLowerCase().includes("daily");
 
-  const displayScoreText = isDailyEval
-    ? `${score.earnedScore !== null ? score.earnedScore : 0}/${score.possiblePoints > 0 ? score.possiblePoints : 0}`
-    : `${hasSavedScore ? result.earnedScore : "___"}/${hasSavedScore ? result.possiblePoints : 0}`;
+  const displayScoreText = !isAreaActivated
+    ? "—"
+    : hasSavedScore
+      ? `${result.earnedScore}/${result.possiblePoints}`
+      : `__/${score.possiblePoints > 0 ? score.possiblePoints : "total"}`;
 
-  const displayRating = isDailyEval
-    ? (score.earnedScore !== null && score.possiblePoints > 0 
-        ? `${((score.earnedScore / score.possiblePoints) * 100).toFixed(2)}%`
-        : "0.00%")
-    : formatContribution(result.weightedContribution);
+  const displayRating = !isAreaActivated
+    ? "—"
+    : isDailyEval
+      ? (score.earnedScore !== null && score.possiblePoints > 0 
+          ? `${((score.earnedScore / score.possiblePoints) * 100).toFixed(2)}%`
+          : "0.00%")
+      : formatContribution(result.weightedContribution);
 
   return (
     <div className="flex min-w-[65px] sm:min-w-[75px] flex-col items-center justify-center py-0.5">

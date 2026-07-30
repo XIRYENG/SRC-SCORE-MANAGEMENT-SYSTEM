@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { getClientDb } from '../utils/firebaseClient';
 import { useNotifications } from '../hooks/useNotifications';
 import { getDisplayIdNumber } from '../utils/idResolver';
+import { motion, AnimatePresence } from 'motion/react';
 import { 
   Users, 
   RefreshCw, 
@@ -26,9 +27,16 @@ import {
   Edit3,
   User,
   Bell,
-  Menu
+  Menu,
+  ChevronDown,
+  Check,
+  Search,
+  HelpCircle,
+  Info
 } from 'lucide-react';
 import { useFirestoreUsers } from '../hooks/useFirestoreUsers';
+import { useScoreFolders } from '../hooks/useScoreFolders';
+import { isRevieweeInFolderScope } from '../utils/folderScope';
 import type { RevieweeData } from '../types';
 import { getUserRole } from '../utils/roleUtils';
 import { isValidRevieweeRecord } from '../services/userIdentityResolver';
@@ -42,7 +50,9 @@ import { SyncModal } from './SyncModal';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { DEFAULT_GRADE_WEIGHTS, GradeWeights, SubjectArea, GRADE_CATEGORY_LABELS, GradeCategoryKey } from '../utils/gradeCalculation';
 import { calculateAreaDashboardData, calculateRevieweeArea } from '../utils/calculateRevieweeArea';
+import { calculateRevieweeCombinedRatings, RevieweeCombinedRatings, CombineMethod, calculateAggregateCombinedBreakdown } from '../utils/combinedCalculation';
 import { getResolvedScore } from '../utils/scoreFieldResolver';
+import { AlertTriangle } from 'lucide-react';
 import { BoardSubjectAreasSection } from './BoardSubjectAreasSection';
 import { AreaPerformanceModal } from './performance/AreaPerformanceModal';
 import { ScoreManagementWrapper } from './admin/ScoreManagementWrapper';
@@ -115,11 +125,55 @@ export function StaffPortal({ data, onLogout, onOpenSyncModal, syncProps }: Staf
   const staffMenuItems = useMemo(() => STAFF_MENU_ITEMS, []);
 
   const fullName = `${data.first_name || ''} ${data.middle_name ? data.middle_name + ' ' : ''}${data.last_name || ''}`.trim() || 'Staff Member';
-  const reviewees = allUsers.filter((u) => getUserRole(u) === "Reviewee" && isValidRevieweeRecord(u));
+  const { folders: allScoreFolders } = useScoreFolders();
+  const [dashboardFolderId, setDashboardFolderId] = useState<string>(() => {
+    return localStorage.getItem('staff_dashboard_folder_id') || 'all';
+  });
+  const [dashboardMode, setDashboardMode] = useState<'single' | 'combined'>(() => {
+    return (localStorage.getItem('staff_dashboard_mode') as 'single' | 'combined') || 'single';
+  });
+  const [selectedFolderIds, setSelectedFolderIds] = useState<string[]>(() => {
+    const saved = localStorage.getItem('staff_selected_folder_ids');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [combineMethod, setCombineMethod] = useState<CombineMethod>('combined_scores');
+  const [isFolderDropdownOpen, setIsFolderDropdownOpen] = useState(false);
+  const [isRuleDropdownOpen, setIsRuleDropdownOpen] = useState(false);
+  const [isSingleFolderDropdownOpen, setIsSingleFolderDropdownOpen] = useState(false);
+  const [folderSearchQuery, setFolderSearchQuery] = useState('');
+
+  useEffect(() => {
+    localStorage.setItem('staff_dashboard_folder_id', dashboardFolderId);
+    localStorage.setItem('staff_dashboard_mode', dashboardMode);
+    localStorage.setItem('staff_selected_folder_ids', JSON.stringify(selectedFolderIds));
+  }, [dashboardFolderId, dashboardMode, selectedFolderIds]);
+
+  const activeDashboardFolder = useMemo(() => {
+    if (dashboardMode === 'combined' || !dashboardFolderId || dashboardFolderId === 'all') return null;
+    return allScoreFolders.find(f => f.id === dashboardFolderId) || null;
+  }, [dashboardFolderId, allScoreFolders, dashboardMode]);
+
+  const activeCombinedFolders = useMemo(() => {
+    if (dashboardMode !== 'combined') return [];
+    return allScoreFolders.filter(f => selectedFolderIds.includes(f.id));
+  }, [allScoreFolders, selectedFolderIds, dashboardMode]);
+
+  const reviewees = useMemo(() => {
+    const base = allUsers.filter((u) => getUserRole(u) === "Reviewee" && isValidRevieweeRecord(u));
+    
+    if (dashboardMode === 'combined') {
+      if (selectedFolderIds.length === 0) return [];
+      return base.filter(u => activeCombinedFolders.some(f => isRevieweeInFolderScope(u, f)));
+    }
+
+    if (!activeDashboardFolder) return base;
+    return base.filter(u => isRevieweeInFolderScope(u, activeDashboardFolder));
+  }, [allUsers, activeDashboardFolder, activeCombinedFolders, dashboardMode, selectedFolderIds]);
 
   const totalReviewees = reviewees.length;
 
   const [gradeWeights, setGradeWeights] = useState<GradeWeights>(DEFAULT_GRADE_WEIGHTS);
+  const [noScoreHandling, setNoScoreHandling] = useState<'include' | 'exclude'>('include');
   const [selectedSubjectBreakdown, setSelectedSubjectBreakdown] = useState<{
     subject: string;
     areaCode?: string;
@@ -140,6 +194,9 @@ export function StaffPortal({ data, onLogout, onOpenSyncModal, syncProps }: Staf
           if (data && data.weights) {
             setGradeWeights(data.weights);
           }
+          if (data && data.noScoreHandling) {
+            setNoScoreHandling(data.noScoreHandling);
+          }
         }
       },
       (err) => console.error("Error listening to grade weights:", err)
@@ -150,21 +207,40 @@ export function StaffPortal({ data, onLogout, onOpenSyncModal, syncProps }: Staf
   const [localScoreFolderId, setLocalScoreFolderId] = useState<string | undefined>(undefined);
 
   const handleAreaCardClick = (subjectLabel: string, subjectKey: SubjectArea) => {
-    const categories: GradeCategoryKey[] = ["preboard", "pretest", "posttest", "quiz", "dailyEvaluation", "removal", "diagnostic"];
-    const breakdown = categories.map(cat => {
-      const validScores = reviewees.map(r => getResolvedScore(r, cat, subjectKey) ?? 0);
-      const avgScore = validScores.length > 0 ? (validScores.reduce((sum, v) => sum + v, 0) / validScores.length) : 0;
-      const weight = gradeWeights[cat] ?? 0;
-      const contribution = avgScore * (weight / 100);
-      return {
-        category: cat,
-        label: GRADE_CATEGORY_LABELS[cat],
-        score: avgScore,
-        weight,
-        contribution
-      };
-    });
-    const totalPercentage = breakdown.reduce((sum, item) => sum + item.contribution, 0);
+    let breakdown: any[] = [];
+    let totalPercentage = 0;
+
+    if (dashboardMode === 'combined' && selectedFolderIds.length > 0) {
+      const folders = allScoreFolders.filter(f => selectedFolderIds.includes(f.id));
+      const result = calculateAggregateCombinedBreakdown(reviewees, folders, gradeWeights, subjectKey, noScoreHandling);
+      breakdown = result.breakdown;
+      totalPercentage = result.totalPercentage;
+    } else {
+      const folderId = dashboardMode === 'single' && dashboardFolderId !== 'all' ? dashboardFolderId : undefined;
+      const categories: GradeCategoryKey[] = ["preboard", "pretest", "posttest", "quiz", "dailyEvaluation", "removal", "diagnostic"];
+      breakdown = categories.map(cat => {
+        const validScores = reviewees.map(r => getResolvedScore(r, cat, subjectKey, folderId)).filter(s => s !== null && s !== undefined) as number[];
+        
+        let avgScore = 0;
+        if (noScoreHandling === 'exclude') {
+           avgScore = validScores.length > 0 ? (validScores.reduce((sum, v) => sum + v, 0) / validScores.length) : 0;
+        } else {
+           const allScores = reviewees.map(r => getResolvedScore(r, cat, subjectKey, folderId) ?? 0);
+           avgScore = allScores.length > 0 ? (allScores.reduce((sum, v) => sum + v, 0) / allScores.length) : 0;
+        }
+        
+        const weight = gradeWeights[cat] ?? 0;
+        const contribution = avgScore * (weight / 100);
+        return {
+          category: cat,
+          label: GRADE_CATEGORY_LABELS[cat],
+          score: avgScore,
+          weight,
+          contribution
+        };
+      });
+      totalPercentage = breakdown.reduce((sum, item) => sum + item.contribution, 0);
+    }
 
     setSelectedSubjectBreakdown({
       subject: subjectLabel,
@@ -187,6 +263,16 @@ export function StaffPortal({ data, onLogout, onOpenSyncModal, syncProps }: Staf
   };
 
   const areaScores = useMemo(() => {
+    const MAJOR_AREA_WEIGHTS: Record<string, number> = {
+      clj: 20,
+      lea: 20,
+      cdi: 15,
+      fs: 20,
+      crim: 15,
+      ca: 10,
+      "cor-ad": 10,
+    };
+
     const subjects: { key: SubjectArea; label: string }[] = [
       { key: "clj", label: "CLJ" },
       { key: "lea", label: "LEA" },
@@ -197,16 +283,42 @@ export function StaffPortal({ data, onLogout, onOpenSyncModal, syncProps }: Staf
     ];
 
     return subjects.map(subj => {
-      const result = calculateAreaDashboardData(reviewees, subj.key, gradeWeights);
+      let percent = 0;
+      if (dashboardMode === 'combined' && activeCombinedFolders.length > 0) {
+        const rawRatings = reviewees.map(r => 
+          calculateRevieweeCombinedRatings(r, activeCombinedFolders, gradeWeights, combineMethod, noScoreHandling, reviewees).subjects[subj.key]
+        );
+        const validRatings = rawRatings.filter(r => r !== null) as number[];
+        
+        if (noScoreHandling === 'exclude') {
+          percent = validRatings.length > 0 
+            ? validRatings.reduce((a, b) => a + b, 0) / validRatings.length
+            : 0;
+        } else {
+          const allRatings = rawRatings.map(r => r ?? 0);
+          percent = allRatings.length > 0 
+            ? allRatings.reduce((a, b) => a + b, 0) / allRatings.length
+            : 0;
+        }
+      } else {
+        const folderId = dashboardMode === 'single' && dashboardFolderId !== 'all' ? dashboardFolderId : undefined;
+        const result = calculateAreaDashboardData(reviewees, subj.key, gradeWeights, noScoreHandling, folderId, allScoreFolders);
+        percent = result.percentage;
+      }
+      
+      const weight = MAJOR_AREA_WEIGHTS[subj.key] || 20;
+      const overallContribution = percent * (weight / 100);
       return {
         key: subj.key,
         area: subj.label,
         title: areaTitleMap[subj.label] || subj.label,
-        percent: result.percentage,
+        percent,
+        weight,
+        overallContribution,
         count: reviewees.length
       };
     });
-  }, [reviewees, gradeWeights]);
+  }, [reviewees, gradeWeights, dashboardMode, activeCombinedFolders, combineMethod, allScoreFolders]);
 
   const handleTabSelect = React.useCallback((tabKey: string) => {
     setSelectedSubjectBreakdown(null);
@@ -286,6 +398,212 @@ export function StaffPortal({ data, onLogout, onOpenSyncModal, syncProps }: Staf
       db={db!}
     >
       <div className={activeTab === 'dashboard' ? "space-y-6" : "hidden"}>
+          {/* Score Folder Scope Filter */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 p-5 rounded-2xl shadow-sm space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-teal-50 dark:bg-teal-900/30 flex items-center justify-center">
+                  <Layers size={20} className="text-teal-600 dark:text-teal-400" />
+                </div>
+                <div>
+                  <span className="text-xs font-black uppercase tracking-wider text-slate-700 dark:text-slate-300 block">Dashboard Score Context</span>
+                  <span className="text-[11px] text-slate-400">Filter calculations by specific folders or combine multiple phases</span>
+                </div>
+              </div>
+
+              <div className="flex items-center bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
+                <button
+                  onClick={() => setDashboardMode('single')}
+                  className={`px-4 py-1.5 text-[11px] font-black uppercase tracking-tight rounded-lg transition-all ${
+                    dashboardMode === 'single'
+                      ? 'bg-white dark:bg-slate-700 text-teal-600 dark:text-teal-400 shadow-sm'
+                      : 'text-slate-500 hover:text-slate-700 dark:text-slate-400'
+                  }`}
+                >
+                  Single Folder
+                </button>
+                <button
+                  onClick={() => setDashboardMode('combined')}
+                  className={`px-4 py-1.5 text-[11px] font-black uppercase tracking-tight rounded-lg transition-all ${
+                    dashboardMode === 'combined'
+                      ? 'bg-white dark:bg-slate-700 text-teal-600 dark:text-teal-400 shadow-sm'
+                      : 'text-slate-500 hover:text-slate-700 dark:text-slate-400'
+                  }`}
+                >
+                  Combined Folders
+                </button>
+              </div>
+            </div>
+
+            <div className="pt-2 border-t border-slate-100 dark:border-slate-800 relative z-10">
+              {/* Click-away overlay */}
+              {(isFolderDropdownOpen || isRuleDropdownOpen || isSingleFolderDropdownOpen) && (
+                <div 
+                  className="fixed inset-0 z-40" 
+                  onClick={() => {
+                    setIsFolderDropdownOpen(false);
+                    setIsRuleDropdownOpen(false);
+                    setIsSingleFolderDropdownOpen(false);
+                  }} 
+                />
+              )}
+
+              {dashboardMode === 'single' ? (
+                <div className="flex items-center gap-3 relative z-50">
+                  <div className="relative w-full max-w-md">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsSingleFolderDropdownOpen(!isSingleFolderDropdownOpen);
+                      }}
+                      className="w-full h-11 px-4 bg-white border border-slate-200 text-slate-800 rounded-xl flex items-center justify-between cursor-pointer focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 outline-none shadow-sm transition-all"
+                    >
+                      <div className="flex items-center gap-2 overflow-hidden">
+                        <span className="text-sm font-bold text-slate-800 truncate">
+                          {dashboardFolderId === 'all' ? '📂 All Folders (Pooled Analytics)' : (
+                            <>📁 {activeDashboardFolder?.name} {activeDashboardFolder?.type ? `(${activeDashboardFolder.type.replace(/_/g, ' ')})` : ''}</>
+                          )}
+                        </span>
+                      </div>
+                      <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform flex-shrink-0 ${isSingleFolderDropdownOpen ? 'rotate-180' : ''}`} />
+                    </button>
+                    
+                    <AnimatePresence>
+                      {isSingleFolderDropdownOpen && (
+                        <motion.div
+                          initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                          transition={{ duration: 0.2 }}
+                          className="absolute z-50 w-full mt-2 bg-white rounded-xl shadow-xl border border-slate-200 overflow-hidden left-0"
+                        >
+                          <div className="p-2 border-b border-slate-100">
+                            <div className="relative">
+                              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                              <input
+                                type="text"
+                                placeholder="Search folders..."
+                                value={folderSearchQuery}
+                                onChange={(e) => setFolderSearchQuery(e.target.value)}
+                                className="w-full pl-8 pr-3 py-1.5 text-sm bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 outline-none transition-all"
+                              />
+                            </div>
+                          </div>
+                          <div className="max-h-80 overflow-y-auto p-2 space-y-1">
+                            {'all folders (pooled analytics)'.includes(folderSearchQuery.toLowerCase()) && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setDashboardFolderId('all');
+                                  setIsSingleFolderDropdownOpen(false);
+                                }}
+                                className={`w-full flex items-center justify-between p-2 rounded-lg cursor-pointer transition-colors text-left ${
+                                  dashboardFolderId === 'all' ? 'bg-teal-50/50 hover:bg-teal-50' : 'hover:bg-slate-50'
+                                }`}
+                              >
+                                <span className="text-xs font-bold text-slate-800">📂 All Folders (Pooled Analytics)</span>
+                                {dashboardFolderId === 'all' && <Check className="w-4 h-4 text-teal-600" />}
+                              </button>
+                            )}
+                            {allScoreFolders
+                              .filter(f => !f.isArchived)
+                              .filter(f => f.name.toLowerCase().includes(folderSearchQuery.toLowerCase()))
+                              .map(folder => (
+                                <button
+                                  key={folder.id}
+                                  type="button"
+                                  onClick={() => {
+                                    setDashboardFolderId(folder.id);
+                                    setIsSingleFolderDropdownOpen(false);
+                                  }}
+                                  className={`w-full flex items-center justify-between p-2 rounded-lg cursor-pointer transition-colors text-left ${
+                                    dashboardFolderId === folder.id ? 'bg-teal-50/50 hover:bg-teal-50' : 'hover:bg-slate-50'
+                                  }`}
+                                >
+                                  <div className="flex flex-col min-w-0 flex-1">
+                                    <span className="text-xs font-bold text-slate-800 truncate">📁 {folder.name}</span>
+                                    <span className="text-[10px] text-slate-400 uppercase font-black">{folder.type?.replace(/_/g, ' ') || 'Folder'}</span>
+                                  </div>
+                                  {dashboardFolderId === folder.id && <Check className="w-4 h-4 text-teal-600" />}
+                                </button>
+                              ))}
+                            {allScoreFolders.filter(f => !f.isArchived && f.name.toLowerCase().includes(folderSearchQuery.toLowerCase())).length === 0 && !('all folders (pooled analytics)'.includes(folderSearchQuery.toLowerCase())) && (
+                              <div className="px-3 py-6 text-center text-sm font-medium text-slate-500">
+                                No folders found
+                              </div>
+                            )}
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                  {activeDashboardFolder && (
+                    <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-teal-50 border border-teal-100 text-[10px] font-black text-teal-700 uppercase">
+                      Active: {activeDashboardFolder.name}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
+                    {allScoreFolders.filter(f => !f.isArchived).map(folder => (
+                      <label 
+                        key={folder.id}
+                        className={`flex items-center gap-3 p-3 rounded-xl border transition-all cursor-pointer ${
+                          selectedFolderIds.includes(folder.id)
+                            ? 'border-teal-500 bg-teal-50/50 dark:bg-teal-900/20'
+                            : 'border-slate-200 hover:border-slate-300 bg-white dark:bg-slate-900 dark:border-slate-800'
+                        }`}
+                      >
+                        <input 
+                          type="checkbox"
+                          checked={selectedFolderIds.includes(folder.id)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSelectedFolderIds(prev => [...prev, folder.id]);
+                            } else {
+                              setSelectedFolderIds(prev => prev.filter(id => id !== folder.id));
+                            }
+                          }}
+                          className="w-4 h-4 rounded text-teal-600 focus:ring-teal-500 border-slate-300"
+                        />
+                        <div className="flex flex-col min-w-0">
+                          <span className="text-xs font-bold text-slate-900 dark:text-white truncate">{folder.name}</span>
+                          <span className="text-[10px] text-slate-400 uppercase font-black">{folder.type?.replace(/_/g, ' ') || 'Folder'}</span>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+
+                  {selectedFolderIds.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-4 p-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-black uppercase text-slate-500">Aggregation Rule:</span>
+                        <select 
+                          value={combineMethod}
+                          onChange={(e) => setCombineMethod(e.target.value as CombineMethod)}
+                          className="text-[10px] font-bold bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded px-2 py-1 outline-none"
+                        >
+                          <option value="combined_scores">Combined Earned & Possible (Weighted Volume)</option>
+                          <option value="equal_folder_average">Equal Folder Average</option>
+                        </select>
+                      </div>
+                      <div className="text-[10px] font-black text-teal-700 dark:text-teal-400 ml-auto">
+                        {reviewees.length} Unique Reviewees Identified
+                      </div>
+                    </div>
+                  )}
+
+                  {selectedFolderIds.length < 2 && (
+                    <p className="text-[10px] font-bold text-amber-600 bg-amber-50 p-2 rounded-lg border border-amber-100 flex items-center gap-2">
+                      <AlertTriangle size={12} /> Select at least two folders to enable combined analytics.
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+
           {/* KPI Row */}
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           <StatCard
@@ -482,6 +800,7 @@ export function StaffPortal({ data, onLogout, onOpenSyncModal, syncProps }: Staf
           totalPossible={selectedSubjectBreakdown.totalPossible}
           reviewees={reviewees}
           gradeWeights={gradeWeights}
+          selectedFolders={dashboardMode === 'combined' ? activeCombinedFolders : (activeDashboardFolder ? [activeDashboardFolder] : [])}
         />
       )}
     </PortalLayout>

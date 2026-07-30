@@ -154,7 +154,16 @@ export const AllUsersDirectory: React.FC<AllUsersDirectoryProps> = ({ users, loa
             {
               key: 'name',
               header: 'Name',
-              render: (r) => <span className="font-bold text-slate-900">{r.name}</span>,
+              render: (r) => (
+                <div className="flex items-center gap-2">
+                  <UserAvatar
+                    photoURL={r.originalUser?.photo_url || r.originalUser?.photoUrl || r.originalUser?.photoURL}
+                    size={28}
+                    className="w-7 h-7 rounded-full object-cover border border-slate-200 bg-white shrink-0"
+                  />
+                  <span className="font-bold text-slate-900">{r.name}</span>
+                </div>
+              ),
             },
             {
               key: 'email',

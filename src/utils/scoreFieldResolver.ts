@@ -14,7 +14,8 @@ export function parseOptionalNumber(value: unknown): number | null {
 export function getResolvedDetailedScore(
   reviewee: Record<string, any>,
   category: string,
-  subject: string
+  subject: string,
+  folderId?: string | null
 ): ScoreValue {
   const catKey = normalizeScoreCategory(category);
   const subjKey = normalizeScoreSubject(subject);
@@ -23,6 +24,11 @@ export function getResolvedDetailedScore(
   if (reviewee?.scoresByDate && typeof reviewee.scoresByDate === "object") {
     const entries = Object.values(reviewee.scoresByDate).filter((entry: any) => {
       if (!entry || typeof entry !== "object") return false;
+      
+      if (folderId) {
+         const entryFolder = entry.folderId || entry.scoreFolderId || "main";
+         if (entryFolder !== folderId) return false;
+      }
 
       const entryCat = String(entry.category || "").toLowerCase();
       const entryCatKey = normalizeScoreCategory(entry.categoryKey || entryCat);
@@ -62,75 +68,81 @@ export function getResolvedDetailedScore(
     }
   }
 
-  // 2. Check flat fields for earned score
-  const scoreField = getScoreFieldName(category, subject);
-  let flatFieldKeys: string[] = [scoreField];
-  if (catKey === "preboard") {
-    flatFieldKeys = [`preboard_${subjKey}`, `score_${subjKey}_preboard`];
-  } else if (catKey === "pretest") {
-    flatFieldKeys = [`pretest_${subjKey}`, `score_${subjKey}_pretest`, `score_${subjKey}`];
-  } else if (catKey === "posttest") {
-    flatFieldKeys = [`post_${subjKey}`, `posttest_${subjKey}`, `score_${subjKey}_posttest`, `score_${subjKey}_post`];
-  } else if (catKey === "quiz") {
-    flatFieldKeys = [`score_${subjKey}_quiz`, `score_${subjKey}_quizzes`, `quiz_${subjKey}`];
-  } else if (catKey === "dailyevaluation") {
-    flatFieldKeys = [
-      `score_${subjKey}_dailyevaluation`,
-      `score_${subjKey}_evaluation`,
-      `score_${subjKey}_daily_evaluation`,
-      `score_clj_dailyevaluation`,
-      `score_${subjKey}_daily`
-    ];
-  } else if (catKey === "removal") {
-    flatFieldKeys = [`score_${subjKey}_removal`, `score_removal_${subjKey}`];
-  } else if (catKey === "diagnostic") {
-    flatFieldKeys = [`diag_${subjKey}`, `diagnostic_${subjKey}`, `score_${subjKey}_diagnostic`];
-  }
+  // 2. Check flat fields for earned score (only if in main folder or no folder specified)
+  if (!folderId || folderId === "main") {
+    const scoreField = getScoreFieldName(category, subject);
+    let flatFieldKeys: string[] = [scoreField];
+    if (catKey === "preboard") {
+      flatFieldKeys = [`preboard_${subjKey}`, `score_${subjKey}_preboard`];
+    } else if (catKey === "pretest") {
+      flatFieldKeys = [`pretest_${subjKey}`, `score_${subjKey}_pretest`, `score_${subjKey}`];
+    } else if (catKey === "posttest") {
+      flatFieldKeys = [`post_${subjKey}`, `posttest_${subjKey}`, `score_${subjKey}_posttest`, `score_${subjKey}_post`];
+    } else if (catKey === "quiz") {
+      flatFieldKeys = [`score_${subjKey}_quiz`, `score_${subjKey}_quizzes`, `quiz_${subjKey}`];
+    } else if (catKey === "dailyevaluation") {
+      flatFieldKeys = [
+        `score_${subjKey}_dailyevaluation`,
+        `score_${subjKey}_evaluation`,
+        `score_${subjKey}_daily_evaluation`,
+        `score_clj_dailyevaluation`,
+        `score_${subjKey}_daily`
+      ];
+    } else if (catKey === "removal") {
+      flatFieldKeys = [`score_${subjKey}_removal`, `score_removal_${subjKey}`];
+    } else if (catKey === "diagnostic") {
+      flatFieldKeys = [`diag_${subjKey}`, `diagnostic_${subjKey}`, `score_${subjKey}_diagnostic`];
+    }
 
-  let earnedScore: number | null = null;
-  for (const fk of flatFieldKeys) {
-    const val = reviewee?.[fk];
-    if (val !== undefined && val !== null && String(val).trim() !== "") {
-      const num = Number(val);
-      if (Number.isFinite(num)) {
-        earnedScore = num;
-        break;
+    let earnedScore: number | null = null;
+    for (const fk of flatFieldKeys) {
+      const val = reviewee?.[fk];
+      if (val !== undefined && val !== null && String(val).trim() !== "") {
+        const num = Number(val);
+        if (Number.isFinite(num)) {
+          earnedScore = num;
+          break;
+        }
       }
     }
+
+    const metadataKey = `${catKey}_${subjKey}`;
+    const latestRecord =
+      reviewee?.latestScores?.[metadataKey] ??
+      reviewee?.latestScores?.[catKey] ??
+      reviewee?.manualScores?.[metadataKey];
+
+    const possiblePoints =
+      parseOptionalNumber(
+        latestRecord?.possiblePoints ??
+          latestRecord?.totalItems ??
+          latestRecord?.perfectScore ??
+          latestRecord?.maxScore ??
+          reviewee?.scoreMetadata?.[metadataKey]?.possiblePoints ??
+          reviewee?.[`possible_points_${subjKey}`] ??
+          reviewee?.[`total_items_${subjKey}`]
+      ) ?? 100;
+
+    return {
+      earnedScore,
+      possiblePoints: possiblePoints > 0 ? possiblePoints : 100,
+    };
   }
 
-  const metadataKey = `${catKey}_${subjKey}`;
-  const latestRecord =
-    reviewee?.latestScores?.[metadataKey] ??
-    reviewee?.latestScores?.[catKey] ??
-    reviewee?.manualScores?.[metadataKey];
-
-  const possiblePoints =
-    parseOptionalNumber(
-      latestRecord?.possiblePoints ??
-        latestRecord?.totalItems ??
-        latestRecord?.perfectScore ??
-        latestRecord?.maxScore ??
-        reviewee?.scoreMetadata?.[metadataKey]?.possiblePoints ??
-        reviewee?.[`possible_points_${subjKey}`] ??
-        reviewee?.[`total_items_${subjKey}`]
-    ) ?? 100;
-
-  return {
-    earnedScore,
-    possiblePoints: possiblePoints > 0 ? possiblePoints : 100,
-  };
+  return { earnedScore: null, possiblePoints: 100 };
 }
 
 export function getResolvedScore(
   reviewee: Record<string, any>,
   category: string,
-  subject: string
+  subject: string,
+  folderId?: string | null
 ): number | null {
   const { earnedScore, possiblePoints } = getResolvedDetailedScore(
     reviewee,
     category,
-    subject
+    subject,
+    folderId
   );
 
   if (earnedScore === null || earnedScore === undefined) {
