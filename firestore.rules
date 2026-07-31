@@ -109,6 +109,36 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    match /scores/{scoreId} {
+      allow read: if true;
+      allow create, update: if isAdminLike();
+      allow delete: if isAdmin();
+    }
+
+    match /score_events/{eventId} {
+      allow read: if true;
+      allow create, update: if isAdminLike();
+      allow delete: if isAdmin();
+    }
+
+    match /score_import_history/{importId} {
+      allow read, create, update: if isAdminLike();
+      allow delete: if isAdmin();
+    }
+
+    match /activity_logs/{logId} {
+      allow read, create: if isAdminLike();
+      allow update, delete: if isAdmin();
+    }
+
+    match /score_area_settings/{settingId} {
+      allow read, write: if isAdminLike();
+    }
+
+    match /schools/{schoolId}/score_area_settings/{settingId} {
+      allow read, write: if isAdminLike();
+    }
+
     // Default
     match /{document=**} {
       allow read: if true;

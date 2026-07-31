@@ -1,3 +1,5 @@
+import { getSchoolDisplayName } from '../utils/schoolDisplayName';
+
 export type CanonicalUserIdentity = {
   userDocId: string;
   firebaseUid: string;
@@ -14,7 +16,7 @@ export type CanonicalUserIdentity = {
   isArchived?: boolean;
 };
 
-export const INVALID_MIDDLE_NAME_VALUES = new Set([
+export const INVALID_NAME_VALUES = new Set([
   "",
   "blank",
   "null",
@@ -25,18 +27,35 @@ export const INVALID_MIDDLE_NAME_VALUES = new Set([
   "-",
   "—",
   "[object object]",
+  ",",
+  ", ",
 ]);
 
-export function cleanOptionalName(value: unknown): string {
-  const cleaned = String(value ?? "").trim();
-  if (INVALID_MIDDLE_NAME_VALUES.has(cleaned.toLowerCase())) {
+export function cleanIdentityValue(value: unknown): string {
+  if (value === undefined || value === null) return "";
+  const cleaned = String(value).trim();
+  if (INVALID_NAME_VALUES.has(cleaned.toLowerCase())) {
     return "";
   }
   return cleaned;
 }
 
+export function cleanOptionalName(value: unknown): string {
+  return cleanIdentityValue(value);
+}
+
+export function firstMeaningfulValue(...values: unknown[]): string {
+  for (const value of values) {
+    const cleaned = cleanIdentityValue(value);
+    if (cleaned) {
+      return cleaned;
+    }
+  }
+  return "";
+}
+
 export function formatMiddleName(value: unknown): string {
-  const cleaned = cleanOptionalName(value);
+  const cleaned = cleanIdentityValue(value);
   return cleaned || "-";
 }
 
@@ -55,20 +74,24 @@ export function formatFullName({
   firstName,
   middleName,
   lastName,
+  suffix,
 }: {
   firstName?: string;
   middleName?: string;
   lastName?: string;
+  suffix?: string;
 }): string {
   const first = String(firstName || "").trim().toUpperCase();
-  const middle = cleanOptionalName(middleName).toUpperCase();
+  const middle = cleanIdentityValue(middleName).toUpperCase();
   const last = String(lastName || "").trim().toUpperCase();
+  const suf = String(suffix || "").trim().toUpperCase();
 
-  const middleInitial = middle ? `${middle.charAt(0)}.` : "";
+  const lastWithSuffix = [last, suf].filter(Boolean).join(" ");
+
   return [
+    lastWithSuffix ? `${lastWithSuffix},` : "",
     first,
-    middleInitial,
-    last,
+    middle,
   ]
     .filter(Boolean)
     .join(" ")
@@ -90,11 +113,41 @@ export function formatFormalName({
   suffix?: unknown;
   fallbackFullName?: unknown;
 }): string {
-  const first = String(firstName ?? "").trim().toUpperCase();
-  const middle = cleanOptionalName(middleName).toUpperCase();
-  const last = String(lastName ?? "").trim().toUpperCase();
-  const suf = String(suffix ?? "").trim().toUpperCase();
-  const fallback = String(fallbackFullName ?? "").trim().toUpperCase();
+  let first = cleanIdentityValue(firstName).toUpperCase();
+  let middle = cleanIdentityValue(middleName).toUpperCase();
+  let last = cleanIdentityValue(lastName).toUpperCase();
+  const suf = cleanIdentityValue(suffix).toUpperCase();
+  const fallback = cleanIdentityValue(fallbackFullName).toUpperCase();
+
+  if ((!first || !last) && fallback && !fallback.includes("@")) {
+    if (fallback.includes(",")) {
+      const parts = fallback.split(",").map(p => p.trim()).filter(Boolean);
+      if (parts.length >= 2) {
+        if (!last) last = parts[0];
+        const rest = parts[1].split(/\s+/);
+        if (!first && rest.length > 0) first = rest[0];
+        if (!middle && rest.length > 1) {
+          middle = rest.slice(1).join(" ");
+        }
+      } else if (parts.length === 1 && !last) {
+        last = parts[0];
+      }
+    } else {
+      const tokens = fallback.split(/\s+/).filter(Boolean);
+      if (tokens.length === 1) {
+        if (!last) last = tokens[0];
+      } else if (tokens.length === 2) {
+        if (!first) first = tokens[0];
+        if (!last) last = tokens[1];
+      } else if (tokens.length >= 3) {
+        if (!first) first = tokens[0];
+        if (!last) last = tokens[tokens.length - 1];
+        if (!middle) {
+          middle = tokens.slice(1, tokens.length - 1).join(" ");
+        }
+      }
+    }
+  }
 
   const middleInitial = middle ? `${middle.charAt(0)}.` : "";
   const lastWithSuffix = [last, suf].filter(Boolean).join(" ");
@@ -149,41 +202,19 @@ export function compareUsersAlphabetically(a: any, b: any): number {
 export function isValidRevieweeRecord(user: any): boolean {
   if (!user) return false;
 
-  // Account status check
   const status = String(user.accountStatus || user.status || "").toLowerCase();
   if (status === "merged" || status === "deleted" || user.isDeleted || user.deleted || user.is_deleted) {
     return false;
   }
 
-  const idNumber = String(
-    user.seq_id ??
-    user.seqId ??
-    user.id_number ??
-    user.idNumber ??
-    user.student_id ??
-    user.studentId ??
-    user.srcId ??
-    ""
-  ).trim();
+  const canonical = resolveCanonicalUserIdentity(user);
+  const hasName = Boolean(canonical.firstName || canonical.lastName || canonical.fullName);
+  const isUnknown = canonical.fullName === "UNKNOWN USER" || canonical.fullName === "";
+  
+  const hasIdNumber = Boolean(canonical.idNumber && canonical.idNumber !== "-" && canonical.idNumber !== "—" && canonical.idNumber.toLowerCase() !== "na" && canonical.idNumber.toLowerCase() !== "none");
+  const hasSchool = Boolean(canonical.school && canonical.school !== "-" && canonical.school !== "—" && canonical.school.toLowerCase() !== "unknown school");
 
-  const firstName = String(user.first_name ?? user.firstName ?? "").trim();
-  const middleName = String(user.middle_name ?? user.middleName ?? "").trim();
-  const lastName = String(user.last_name ?? user.lastName ?? "").trim();
-  const fullName = String(user.full_name ?? user.fullName ?? user.displayName ?? user.name ?? "").trim();
-
-  const hasId = Boolean(idNumber && idNumber !== "—" && idNumber !== "-" && idNumber !== "N/A");
-
-  // Check if formatted name is comma-only or blank
-  // e.g. ", ", ",", or both last and first names are empty and full name is empty/comma
-  const isCommaOnlyName =
-    (!lastName && !firstName && (!fullName || fullName === "," || fullName === ", " || fullName.trim() === ",")) ||
-    fullName.trim() === "," ||
-    fullName.trim() === ", ";
-
-  const hasName = Boolean((firstName || lastName || fullName) && !isCommaOnlyName);
-
-  // A valid reviewee record MUST have both a non-blank ID and a valid (non-comma-only) name
-  return Boolean(hasId && hasName && !isCommaOnlyName);
+  return Boolean(hasName && !isUnknown && hasIdNumber && hasSchool);
 }
 
 export function isValidUserRecord(user: any): boolean {
@@ -201,46 +232,30 @@ export function isValidUserRecord(user: any): boolean {
     return isValidRevieweeRecord(user);
   }
 
-  const firstName = String(user.first_name ?? user.firstName ?? "").trim();
-  const lastName = String(user.last_name ?? user.lastName ?? "").trim();
-  const fullName = String(user.full_name ?? user.fullName ?? user.displayName ?? user.name ?? "").trim();
+  const canonical = resolveCanonicalUserIdentity(user);
   const email = String(user.email ?? "").trim();
-
-  const isCommaOnlyName =
-    (!lastName && !firstName && (!fullName || fullName === "," || fullName === ", " || fullName.trim() === ",")) ||
-    fullName.trim() === "," ||
-    fullName.trim() === ", ";
+  const isCommaOnlyName = canonical.fullName === "," || canonical.fullName === ", ";
 
   if (isCommaOnlyName) {
     return false;
   }
 
-  return Boolean(email || firstName || lastName || fullName);
+  return Boolean(email || canonical.firstName || canonical.lastName || canonical.fullName);
 }
 
 export function isValidScoreManagementUser(user: CanonicalUserIdentity | null | undefined): boolean {
   if (!user) return false;
-  const idNumber = String(user.idNumber ?? "").trim();
   const firstName = String(user.firstName ?? "").trim();
   const middleName = String(user.middleName ?? "").trim();
   const lastName = String(user.lastName ?? "").trim();
   const fullName = String(user.fullName ?? "").trim();
 
-  const isCommaOnlyName =
-    (!lastName && !firstName && (!fullName || fullName === "," || fullName === ", " || fullName.trim() === ",")) ||
-    fullName.trim() === "," ||
-    fullName.trim() === ", ";
+  const isCommaOnlyName = fullName === "," || fullName === ", ";
+  const hasValidName = Boolean((firstName || middleName || lastName || fullName) && !isCommaOnlyName && fullName !== "UNKNOWN USER");
 
-  const hasValidName = Boolean((firstName || middleName || lastName || fullName) && !isCommaOnlyName);
-  const hasId = Boolean(idNumber && idNumber !== "—" && idNumber !== "-" && idNumber !== "N/A");
-
-  return Boolean(hasId && hasValidName && !isCommaOnlyName);
+  return hasValidName;
 }
 
-/**
- * Resolves any user record (from Firestore users collection, score metadata, or CSV row)
- * into a robust CanonicalUserIdentity.
- */
 export function resolveCanonicalUserIdentity(user: any): CanonicalUserIdentity {
   if (!user) {
     return {
@@ -255,6 +270,7 @@ export function resolveCanonicalUserIdentity(user: any): CanonicalUserIdentity {
       role: "Reviewee",
       school: "",
       branch: "",
+      profilePicture: "",
       isArchived: false,
     };
   }
@@ -263,84 +279,211 @@ export function resolveCanonicalUserIdentity(user: any): CanonicalUserIdentity {
   const firebaseUid = String(user.firebaseUid || user.uid || user.user_uid || "").trim();
   
   const idNumber = normalizeIdNumber(
-    user.idNumber ??
-    user.id_number ??
-    user.revieweeId ??
-    user.reviewee_id ??
-    user.staffId ??
-    user.staff_id ??
-    user.adminId ??
-    user.admin_id ??
-    user.seq_id ??
-    user.seqId ??
-    ""
+    firstMeaningfulValue(
+      user.idNumber,
+      user.id_number,
+      user.seqId,
+      user.seq_id,
+      user.srcId,
+      user.src_id,
+      user.studentId,
+      user.student_id,
+      user.studentNumber,
+      user.student_number,
+      user.revieweeId,
+      user.reviewee_id,
+      user.officialIdNumber,
+      user.official_id_number,
+      user.employeeId,
+      user.employee_id,
+      user.registrationId,
+      user.registration_id,
+      user.staffId,
+      user.staff_id,
+      user.adminId,
+      user.admin_id,
+      user.profile?.idNumber,
+      user.profile?.seqId,
+      user.profile?.id_number,
+      user.profile?.studentId,
+      user.personalInfo?.idNumber,
+      user.personalInfo?.seqId
+    )
   );
 
-  const firstName = String(
-    user.firstName ??
-    user.first_name ??
-    user.givenName ??
-    user.given_name ??
-    ""
-  ).trim().toUpperCase();
+  let firstName = firstMeaningfulValue(
+    user.firstName,
+    user.first_name,
+    user.firstname,
+    user.givenName,
+    user.given_name,
+    user.studentFirstName,
+    user.student_firstname,
+    user.student_first_name,
+    user.revieweeFirstName,
+    user.reviewee_first_name,
+    user.s_firstname,
+    user.s_first_name,
+    user.fname,
+    user.first,
+    user.profile?.firstName,
+    user.profile?.first_name,
+    user.personalInfo?.firstName
+  );
 
-  const middleName = cleanOptionalName(
-    user.middleName ??
-    user.middle_name ??
-    user.middleInitial ??
-    user.middle_initial ??
-    ""
-  ).toUpperCase();
+  let middleName = firstMeaningfulValue(
+    user.middleName,
+    user.middle_name,
+    user.middlename,
+    user.middleInitial,
+    user.middle_initial,
+    user.studentMiddleName,
+    user.student_middlename,
+    user.student_middle_name,
+    user.revieweeMiddleName,
+    user.reviewee_middle_name,
+    user.s_middlename,
+    user.s_middle_name,
+    user.mname,
+    user.middle,
+    user.profile?.middleName,
+    user.profile?.middle_name,
+    user.personalInfo?.middleName
+  );
 
-  const lastName = String(
-    user.lastName ??
-    user.last_name ??
-    user.surname ??
-    user.familyName ??
-    user.family_name ??
-    ""
-  ).trim().toUpperCase();
+  let lastName = firstMeaningfulValue(
+    user.lastName,
+    user.last_name,
+    user.lastname,
+    user.surname,
+    user.familyName,
+    user.family_name,
+    user.studentLastName,
+    user.student_lastname,
+    user.student_last_name,
+    user.revieweeLastName,
+    user.reviewee_last_name,
+    user.s_lastname,
+    user.s_last_name,
+    user.lname,
+    user.last,
+    user.profile?.lastName,
+    user.profile?.last_name,
+    user.personalInfo?.lastName
+  );
 
-  const email = String(
-    user.email ??
-    user.emailAddress ??
-    user.email_address ??
-    user.normalizedEmail ??
-    ""
-  ).trim();
+  const rawFullName = firstMeaningfulValue(
+    user.fullName,
+    user.full_name,
+    user.completeName,
+    user.complete_name,
+    user.displayName,
+    user.display_name,
+    user.studentName,
+    user.student_name,
+    user.revieweeName,
+    user.reviewee_name,
+    user.registeredName,
+    user.registered_name,
+    user.name,
+    user.profile?.fullName,
+    user.profile?.full_name,
+    user.personalInfo?.fullName
+  );
 
-  const role = String(
-    user.role ??
-    user.userRole ??
-    user.accountType ??
+  if ((!firstName || !lastName) && rawFullName && !rawFullName.includes("@")) {
+    if (rawFullName.includes(",")) {
+      const parts = rawFullName.split(",").map(p => p.trim()).filter(Boolean);
+      if (parts.length >= 2) {
+        if (!lastName) lastName = parts[0];
+        const rest = parts[1].split(/\s+/);
+        if (!firstName && rest.length > 0) firstName = rest[0];
+        if (!middleName && rest.length > 1) {
+          middleName = rest.slice(1).join(" ");
+        }
+      } else if (parts.length === 1 && !lastName) {
+        lastName = parts[0];
+      }
+    } else {
+      const tokens = rawFullName.split(/\s+/).filter(Boolean);
+      if (tokens.length === 1) {
+        if (!lastName) lastName = tokens[0];
+      } else if (tokens.length === 2) {
+        if (!firstName) firstName = tokens[0];
+        if (!lastName) lastName = tokens[1];
+      } else if (tokens.length >= 3) {
+        if (!firstName) firstName = tokens[0];
+        if (!lastName) lastName = tokens[tokens.length - 1];
+        if (!middleName) {
+          middleName = tokens.slice(1, tokens.length - 1).join(" ");
+        }
+      }
+    }
+  }
+
+  const email = firstMeaningfulValue(
+    user.email,
+    user.emailAddress,
+    user.email_address,
+    user.normalizedEmail
+  );
+
+  const role = firstMeaningfulValue(
+    user.role,
+    user.role_name,
+    user.userRole,
+    user.accountType,
     "Reviewee"
-  ).trim();
+  );
 
-  const school = String(
-    user.school ??
-    user.schoolName ??
-    user.school_name ??
-    ""
-  ).trim();
+  const rawSchool = firstMeaningfulValue(
+    user.school,
+    user.schoolName,
+    user.school_name,
+    user.school_college,
+    user.schoolCollege,
+    user.college,
+    user.institution,
+    user.university,
+    user.schoolBranch,
+    user.school_branch,
+    user.school_id,
+    user.schoolId,
+    user.schoolFolder,
+    user.assignedSchool,
+    user.profile?.school,
+    user.profile?.schoolName,
+    user.profile?.school_name,
+    user.personalInfo?.school,
+    user.personalInfo?.schoolName
+  );
 
-  const branch = String(
-    user.branch ??
-    user.reviewBranch ??
-    user.review_branch ??
-    ""
-  ).trim();
+  const school = rawSchool ? getSchoolDisplayName(rawSchool) : "";
 
-  const profilePicture = user.profilePicture || user.profile_picture || user.avatar || user.photoURL || "";
+  const branch = firstMeaningfulValue(
+    user.branch,
+    user.reviewBranch,
+    user.review_branch,
+    user.branchName,
+    user.branch_name,
+    user.assignedBranch,
+    user.schoolBranch,
+    user.reviewCenterBranch,
+    user.profile?.reviewBranch,
+    user.profile?.branch,
+    user.personalInfo?.reviewBranch
+  );
+
+  const profilePicture = firstMeaningfulValue(
+    user.photoURL,
+    user.photo_url,
+    user.photoUrl,
+    user.profilePicture,
+    user.profile_picture,
+    user.avatar
+  );
+
   const isArchived = Boolean(user.isArchived || user.is_archived);
-
-  const rawFullName = String(
-    user.fullName ??
-    user.full_name ??
-    user.displayName ??
-    user.display_name ??
-    user.name ??
-    ""
-  ).trim();
 
   const fullName = formatFormalName({
     firstName,
@@ -354,9 +497,9 @@ export function resolveCanonicalUserIdentity(user: any): CanonicalUserIdentity {
     userDocId,
     firebaseUid,
     idNumber,
-    firstName,
-    middleName,
-    lastName,
+    firstName: firstName.toUpperCase(),
+    middleName: middleName.toUpperCase(),
+    lastName: lastName.toUpperCase(),
     fullName,
     email,
     role,

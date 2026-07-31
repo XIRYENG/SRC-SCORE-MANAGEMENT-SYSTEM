@@ -16,6 +16,7 @@ import { getCanonicalFullName } from '../../utils/nameNormalization';
 import { getSubjectsByArea, MajorAreaCode } from '../../config/criminologyCurriculum';
 import { DailyEvaluationRevieweeMatrix, DailyEvalRevieweeRow } from '../score-management/DailyEvaluationRevieweeMatrix';
 import { isValidUserRecord, resolveCanonicalUserIdentity, compareUsersAlphabetically, formatFormalName } from '../../services/userIdentityResolver';
+import { getUserRole } from '../../utils/roleUtils';
 import { AnimatedSelect } from '../ui/animated-select';
 import { AnimatedDatePicker } from '../ui/animated-date-picker';
 import { ConfirmActionModal } from '../ConfirmActionModal';
@@ -114,6 +115,19 @@ function parseOptionalNumber(value: unknown): number | null {
   }
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function formatEvaluationDate(dateStr: any): string {
+  if (!dateStr || dateStr === '-' || dateStr === 'All Dates') return '-';
+  try {
+    const val = typeof dateStr === 'object' && dateStr !== null && 'seconds' in dateStr 
+      ? new Date((dateStr as any).seconds * 1000)
+      : new Date(String(dateStr).trim());
+    if (!isNaN(val.getTime())) {
+      return val.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    }
+  } catch (e) {}
+  return String(dateStr);
 }
 
 function getUnifiedScore(user: any, category: string, subject: string, selectedDate: string, scoreFolderId?: string) {
@@ -580,7 +594,8 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
       const status = String(uAny.accountStatus || uAny.status || "").toLowerCase();
       if (status === "merged" || status === "deleted" || uAny.isDeleted || uAny.deleted || uAny.is_deleted) return false;
       if (!isValidUserRecord(u)) return false;
-      if (u.role !== "Reviewee") return false;
+      const role = getUserRole(u).toLowerCase();
+      if (role !== "reviewee" && role !== "student") return false;
 
       // Filter by active score folder scope
       if (activeScoreFolder) {
@@ -730,6 +745,94 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
     }
   }, [selectedCategory, dates, selectedDate]);
 
+  const areaColumnsMap = useMemo(() => {
+    if (isDailyEvalCategory) return [];
+
+    const baseAreas = [
+      { key: "CLJ", label: "CLJ" },
+      { key: "LEA", label: "LEA" },
+      { key: "CDI", label: "CDI" },
+      { key: "FS", label: "FS" },
+      { key: "CRIM", label: "CRIM" },
+      { key: "CA", label: "CA" }
+    ].filter(s => !hiddenSubjectIds.has(s.key));
+
+    const catKey = normalizeScoreCategory(selectedCategory);
+
+    return baseAreas.map(area => {
+      const matchingEvents = scoreEvents.filter(evt => {
+        if (scoreFolderId && evt.scoreFolderId && evt.scoreFolderId !== scoreFolderId) return false;
+        if (normalizeScoreCategory(evt.category || '') !== catKey) return false;
+        if (evt.deleted) return false;
+        if (!showArchived && evt.archived) return false;
+
+        const evtArea = normalizeScoreSubject(evt.majorAreaId || evt.subject || evt.subjectId || evt.majorAreaName || '');
+        return evtArea === area.key.toLowerCase() || evtArea === area.label.toLowerCase() || evt.majorAreaId === area.key || evt.subject === area.label;
+      });
+
+      matchingEvents.sort((a, b) => new Date(a.evaluationDate || a.date || 0).getTime() - new Date(b.evaluationDate || b.date || 0).getTime());
+
+      const filteredEvents = matchingEvents.filter(evt => {
+        if (selectedDate === 'All Dates') return true;
+        const evtDateNorm = normalizeDateString(evt.evaluationDate || evt.date);
+        const selDateNorm = normalizeDateString(selectedDate);
+        return evtDateNorm === selDateNorm;
+      });
+
+      const columns: any[] = [];
+
+      if (filteredEvents.length > 0) {
+        filteredEvents.forEach(evt => {
+          const rawDate = evt.evaluationDate || evt.date || '';
+          const formattedDate = rawDate ? formatEvaluationDate(rawDate) : '-';
+          columns.push({
+            key: `${area.key}_${evt.id || rawDate}`,
+            majorAreaId: area.key,
+            majorAreaLabel: area.label,
+            evaluationDate: formattedDate,
+            normalizedDate: normalizeDateString(rawDate),
+            scoreEventId: evt.id || null,
+            totalItems: parseOptionalNumber(evt.totalItems || evt.possiblePoints || 100),
+            scoreEvent: evt
+          });
+        });
+      } else if (selectedDate === 'All Dates' && matchingEvents.length === 0) {
+        columns.push({
+          key: `${area.key}_no_event`,
+          majorAreaId: area.key,
+          majorAreaLabel: area.label,
+          evaluationDate: '-',
+          normalizedDate: '',
+          scoreEventId: null,
+          totalItems: null,
+          scoreEvent: null
+        });
+      } else {
+        columns.push({
+          key: `${area.key}_${selectedDate}`,
+          majorAreaId: area.key,
+          majorAreaLabel: area.label,
+          evaluationDate: selectedDate !== 'All Dates' ? formatEvaluationDate(selectedDate) : '-',
+          normalizedDate: selectedDate !== 'All Dates' ? normalizeDateString(selectedDate) : '',
+          scoreEventId: null,
+          totalItems: null,
+          scoreEvent: null
+        });
+      }
+
+      return {
+        majorAreaId: area.key,
+        majorAreaLabel: area.label,
+        columns
+      };
+    });
+  }, [scoreEvents, scoreFolderId, selectedCategory, selectedDate, showArchived, hiddenSubjectIds, isDailyEvalCategory]);
+
+  const flatColumns = useMemo(() => {
+    if (isDailyEvalCategory) return [];
+    return areaColumnsMap.flatMap(area => area.columns);
+  }, [areaColumnsMap, isDailyEvalCategory]);
+
   const subjects = [
     { key: "CLJ", label: "CLJ" },
     { key: "LEA", label: "LEA" },
@@ -778,47 +881,88 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
     });
 
     const withScores = filtered.map((user: RevieweeData) => {
-      const isDailyEval = normalizeScoreCategory(selectedCategory) === 'dailyevaluation';
+      const isDailyEval = isDailyEvalCategory;
 
       let totalEarned = 0;
       let totalPossible = 0;
 
-      const subjScores = displayedSubjects.map(s => {
-        const unified = getUnifiedScore(user, selectedCategory, s.label, selectedDate, scoreFolderId);
-        const earned = unified.earnedScore;
-        const possible = unified.possiblePoints;
-
-        if (isDailyEval) {
+      if (isDailyEval) {
+        const subjScores = displayedSubjects.map(s => {
+          const unified = getUnifiedScore(user, selectedCategory, s.label, selectedDate, scoreFolderId);
+          const earned = unified.earnedScore;
+          const possible = unified.possiblePoints;
           const actualEarned = earned !== null ? earned : 0;
           const actualPossible = earned !== null ? possible : 0;
           totalEarned += actualEarned;
           totalPossible += actualPossible;
           return { score: earned, total: actualPossible };
-        } else {
-          if (earned !== null) {
-            totalEarned += earned;
-            totalPossible += possible;
-            return { score: earned, total: possible };
+        });
+
+        const rating = totalPossible > 0 ? (totalEarned / totalPossible) * 100 : 0;
+        const hasScores = totalPossible > 0;
+
+        return {
+          user,
+          subjScores,
+          totalEarned,
+          totalPossible,
+          rating,
+          hasScores
+        };
+      } else {
+        const columnScores = flatColumns.map(col => {
+          const dateToQuery = (col.evaluationDate === '-' || !col.evaluationDate) ? 'All Dates' : col.evaluationDate;
+          const unified = getUnifiedScore(user, selectedCategory, col.majorAreaLabel, dateToQuery, scoreFolderId);
+          let earned = unified.earnedScore;
+          let possible = col.totalItems || unified.possiblePoints || 100;
+
+          if (col.scoreEventId && user.assessmentRecords && typeof user.assessmentRecords === 'object') {
+            const matchingRec = Object.values(user.assessmentRecords).find((r: any) => 
+              r && typeof r === 'object' && 
+              (r.scoreEventId === col.scoreEventId || (normalizeDateString(r.date || r.createdAt) === col.normalizedDate && normalizeScoreSubject(r.subject || r.area) === col.majorAreaId.toLowerCase()))
+            );
+            if (matchingRec) {
+              const sc = parseOptionalNumber((matchingRec as any).score ?? (matchingRec as any).earnedPoints ?? (matchingRec as any).rawScore);
+              if (sc !== null) earned = sc;
+              const tp = parseOptionalNumber((matchingRec as any).totalScore ?? (matchingRec as any).totalItems ?? (matchingRec as any).possiblePoints);
+              if (tp !== null && tp > 0) possible = tp;
+            }
           }
-          const fallbackPossible = possible > 0 ? possible : 100;
-          totalPossible += fallbackPossible;
-          return { score: null, total: fallbackPossible };
-        }
-      });
 
-      const rating = totalPossible > 0 ? (totalEarned / totalPossible) * 100 : 0;
-      const hasScores = isDailyEval 
-        ? totalPossible > 0 
-        : subjScores.some(s => s.score !== null);
+          const hasEvent = col.scoreEventId !== null || col.evaluationDate !== '-';
+          return {
+            columnKey: col.key,
+            majorAreaId: col.majorAreaId,
+            majorAreaLabel: col.majorAreaLabel,
+            evaluationDate: col.evaluationDate,
+            scoreEventId: col.scoreEventId,
+            score: earned,
+            total: possible,
+            hasEvent
+          };
+        });
 
-      return {
-        user,
-        subjScores,
-        totalEarned,
-        totalPossible,
-        rating,
-        hasScores
-      };
+        columnScores.forEach(cs => {
+          if (cs.hasEvent) {
+            totalPossible += cs.total;
+            if (cs.score !== null) {
+              totalEarned += cs.score;
+            }
+          }
+        });
+
+        const rating = totalPossible > 0 ? (totalEarned / totalPossible) * 100 : 0;
+        const hasScores = columnScores.some(cs => cs.score !== null);
+
+        return {
+          user,
+          subjScores: columnScores,
+          totalEarned,
+          totalPossible,
+          rating,
+          hasScores
+        };
+      }
     });
 
     return withScores.sort((a, b) => {
@@ -848,10 +992,13 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
         comparison = statusA.localeCompare(statusB);
       } 
       else {
-        const subjIndex = displayedSubjects.findIndex(s => s.label === sortField);
-        if (subjIndex !== -1) {
-          const scoreAObj = a.subjScores[subjIndex];
-          const scoreBObj = b.subjScores[subjIndex];
+        const colIndex = isDailyEvalCategory 
+          ? displayedSubjects.findIndex(s => s.label === sortField)
+          : flatColumns.findIndex(c => c.key === sortField || c.majorAreaLabel === sortField || sortField === `diagnostic:${c.majorAreaId}:${c.normalizedDate || c.key}`);
+
+        if (colIndex !== -1) {
+          const scoreAObj = (a.subjScores as any[])[colIndex];
+          const scoreBObj = (b.subjScores as any[])[colIndex];
 
           const ratingA = (scoreAObj && scoreAObj.total > 0 && scoreAObj.score !== null)
             ? (scoreAObj.score / scoreAObj.total) * 100
@@ -876,7 +1023,7 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
 
       return sortDirection === 'asc' ? comparison : -comparison;
     });
-  }, [allReviewees, searchQuery, selectedSchool, selectedBranch, selectedCategory, selectedDate, displayedSubjects, sortField, sortDirection]);
+  }, [allReviewees, searchQuery, selectedSchool, selectedBranch, selectedCategory, selectedDate, displayedSubjects, flatColumns, isDailyEvalCategory, sortField, sortDirection]);
 
   // Use processed reviewees directly for continuous scrolling
   const dailyEvalMatrixRows: DailyEvalRevieweeRow[] = useMemo(() => {
@@ -919,16 +1066,19 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
 
   const handleExportCSV = () => {
     if (processedReviewees.length === 0) return;
-    const headers = ['ID Number', 'Name', ...displayedSubjects.map(s => s.label), 'Combined', 'Rating', 'Status'];
+    const headers = isDailyEvalCategory 
+      ? ['ID Number', 'Name', ...displayedSubjects.map(s => s.label), 'Combined', 'Rating', 'Status']
+      : ['ID Number', 'Name', ...flatColumns.map(c => `${c.majorAreaLabel} — ${formatEvaluationDate(c.evaluationDate)}`), 'Combined', 'Rating', 'Status'];
+
     const rows = processedReviewees.map((row: any) => {
       const { user, subjScores, totalEarned, totalPossible, rating, hasScores } = row;
       const canonical = resolveCanonicalUserIdentity(user);
       const name = formatFormalName(canonical);
       const id = canonical.idNumber || user.id_number || user.seqId || user.seq_id || user.id || '';
-      const scores = subjScores.map((s: any) => s !== null ? s : '-');
+      const scores = subjScores.map((s: any) => (s !== null && s.score !== null) ? s.score : '-');
       const combined = hasScores ? `${totalEarned}/${totalPossible}` : '-';
       const rat = `${(rating || 0).toFixed(2)}%`;
-      const status = hasScores ? (subjScores.every((s: any) => s !== null) ? 'Completed' : 'In Progress') : 'Not Started';
+      const status = hasScores ? (subjScores.every((s: any) => s !== null && s.score !== null) ? 'Completed' : 'In Progress') : 'Not Started';
       return [id, name, ...scores, combined, rat, status];
     });
 
@@ -948,8 +1098,14 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
     const printWindow = window.open('', '_blank');
     if (!printWindow) return;
 
-    const tableHeaders = ['#', 'ID Number', 'Name', ...displayedSubjects.map(s => `${s.label}`), 'Combined', 'Rating', 'Status'];
-    
+    const topHeaders = isDailyEvalCategory
+      ? displayedSubjects.map(s => `<th>${s.label}</th>`).join('')
+      : areaColumnsMap.map(a => `<th colspan="${Math.max(1, a.columns.length)}">${a.majorAreaLabel}</th>`).join('');
+
+    const secondHeaders = isDailyEvalCategory
+      ? ''
+      : `<tr>${areaColumnsMap.flatMap(a => a.columns.map(c => `<th>${formatEvaluationDate(c.evaluationDate)}</th>`)).join('')}</tr>`;
+
     const tableRowsHtml = processedReviewees.map((row: any, idx: number) => {
       const { user, subjScores, totalEarned, totalPossible, rating, hasScores } = row;
       const canonical = resolveCanonicalUserIdentity(user);
@@ -1012,8 +1168,15 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
           <table>
             <thead>
               <tr>
-                ${tableHeaders.map(h => `<th>${h}</th>`).join('')}
+                <th rowspan="${isDailyEvalCategory ? 1 : 2}">#</th>
+                <th rowspan="${isDailyEvalCategory ? 1 : 2}">ID Number</th>
+                <th rowspan="${isDailyEvalCategory ? 1 : 2}">Name</th>
+                ${topHeaders}
+                <th rowspan="${isDailyEvalCategory ? 1 : 2}">Combined</th>
+                <th rowspan="${isDailyEvalCategory ? 1 : 2}">Rating</th>
+                <th rowspan="${isDailyEvalCategory ? 1 : 2}">Status</th>
               </tr>
+              ${secondHeaders}
             </thead>
             <tbody>
               ${tableRowsHtml}
@@ -1860,11 +2023,11 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
               <table className="w-full min-w-[900px] text-left border-collapse text-xs">
                 <thead>
                   <tr className="bg-teal-50 border-b border-slate-200">
-                    <th className="px-4 py-3 font-bold text-teal-900 whitespace-nowrap text-center">
+                    <th rowSpan={2} className="px-4 py-3 font-bold text-teal-900 whitespace-nowrap text-center">
                       <input type="checkbox" className="rounded border-slate-300 text-teal-600 focus:ring-teal-500 cursor-pointer" />
                       <span className="ml-2">Select</span>
                     </th>
-                    <th className="px-4 py-3 font-bold text-teal-900 whitespace-nowrap">
+                    <th rowSpan={2} className="px-4 py-3 font-bold text-teal-900 whitespace-nowrap">
                       <button 
                         type="button" 
                         onClick={() => {
@@ -1881,7 +2044,7 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
                         {sortField === 'id' && (sortDirection === 'asc' ? ' ▲' : ' ▼')}
                       </button>
                     </th>
-                    <th className="px-4 py-3 font-bold text-teal-900 w-full min-w-[200px]">
+                    <th rowSpan={2} className="px-4 py-3 font-bold text-teal-900 w-full min-w-[200px]">
                       <button 
                         type="button" 
                         onClick={() => {
@@ -1898,26 +2061,30 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
                         {sortField === 'name' && (sortDirection === 'asc' ? ' ▲' : ' ▼')}
                       </button>
                     </th>
-                    {displayedSubjects.map(s => (
-                      <th key={s.key} className="px-3 py-3 font-bold text-teal-900 text-center whitespace-nowrap">
+                    {areaColumnsMap.map(area => (
+                      <th 
+                        key={area.majorAreaId} 
+                        colSpan={Math.max(1, area.columns.length)} 
+                        className="px-3 py-2 font-bold text-teal-900 text-center whitespace-nowrap border-l border-slate-200 bg-teal-100/60"
+                      >
                         <button 
                           type="button" 
                           onClick={() => {
-                            if (sortField === s.label) {
+                            if (sortField === area.majorAreaLabel) {
                               setSortDirection(d => d === 'asc' ? 'desc' : 'asc');
                             } else {
-                              setSortField(s.label);
+                              setSortField(area.majorAreaLabel);
                               setSortDirection('asc');
                             }
                           }}
                           className="flex items-center gap-1 justify-center hover:text-teal-700 transition-colors cursor-pointer font-bold mx-auto"
                         >
-                          {s.label}
-                          {sortField === s.label && (sortDirection === 'asc' ? ' ▲' : ' ▼')}
+                          {area.majorAreaLabel}
+                          {sortField === area.majorAreaLabel && (sortDirection === 'asc' ? ' ▲' : ' ▼')}
                         </button>
                       </th>
                     ))}
-                    <th className="px-4 py-3 font-bold text-teal-900 text-center whitespace-nowrap">
+                    <th rowSpan={2} className="px-4 py-3 font-bold text-teal-900 text-center whitespace-nowrap border-l border-slate-200">
                       <button 
                         type="button" 
                         onClick={() => {
@@ -1934,7 +2101,7 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
                         {sortField === 'combined' && (sortDirection === 'asc' ? ' ▲' : ' ▼')}
                       </button>
                     </th>
-                    <th className="px-4 py-3 font-bold text-teal-900 text-center whitespace-nowrap">
+                    <th rowSpan={2} className="px-4 py-3 font-bold text-teal-900 text-center whitespace-nowrap">
                       <button 
                         type="button" 
                         onClick={() => {
@@ -1951,7 +2118,7 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
                         {sortField === 'rating' && (sortDirection === 'asc' ? ' ▲' : ' ▼')}
                       </button>
                     </th>
-                    <th className="px-4 py-3 font-bold text-teal-900 text-center whitespace-nowrap">
+                    <th rowSpan={2} className="px-4 py-3 font-bold text-teal-900 text-center whitespace-nowrap">
                       <button 
                         type="button" 
                         onClick={() => {
@@ -1968,7 +2135,33 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
                         {sortField === 'status' && (sortDirection === 'asc' ? ' ▲' : ' ▼')}
                       </button>
                     </th>
-                    <th className="px-4 py-3 font-bold text-teal-900 text-center whitespace-nowrap">Action</th>
+                    <th rowSpan={2} className="px-4 py-3 font-bold text-teal-900 text-center whitespace-nowrap">Action</th>
+                  </tr>
+                  <tr className="bg-teal-50/90 border-b border-slate-200">
+                    {areaColumnsMap.flatMap(area =>
+                      area.columns.map(column => {
+                        const sortKey = `diagnostic:${column.majorAreaId}:${column.normalizedDate || column.key}`;
+                        return (
+                          <th key={column.key} className="px-3 py-2 font-bold text-teal-800 text-center whitespace-nowrap border-l border-slate-200 bg-teal-50 text-[11px]">
+                            <button 
+                              type="button" 
+                              onClick={() => {
+                                if (sortField === sortKey || sortField === column.key) {
+                                  setSortDirection(d => d === 'asc' ? 'desc' : 'asc');
+                                } else {
+                                  setSortField(sortKey);
+                                  setSortDirection('asc');
+                                }
+                              }}
+                              className="flex items-center gap-1 justify-center hover:text-teal-900 transition-colors cursor-pointer font-semibold mx-auto"
+                            >
+                              {formatEvaluationDate(column.evaluationDate)}
+                              {(sortField === sortKey || sortField === column.key) && (sortDirection === 'asc' ? ' ▲' : ' ▼')}
+                            </button>
+                          </th>
+                        );
+                      })
+                    )}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -1981,7 +2174,7 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
                         <td className="px-4 py-3 text-center border-r border-slate-100/50">
                           <input type="checkbox" className="rounded border-slate-300 text-teal-600 focus:ring-teal-500 cursor-pointer" />
                         </td>
-                        <td className="px-4 py-3 whitespace-nowrap font-medium text-blue-600">{user.id_number || user.seqId || user.seq_id || user.idNumber || user.revieweeId || user.id || '-'}</td>
+                        <td className="px-4 py-3 whitespace-nowrap font-medium text-blue-600">{resolveCanonicalUserIdentity(user).idNumber || '-'}</td>
                         <td className="px-4 py-3 font-medium text-slate-700">
                           <div className="flex items-center gap-2">
                             <UserAvatar
@@ -1993,17 +2186,26 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
                           </div>
                         </td>
                         {subjScores.map((s: any, i: number) => {
-                          const subjObj = displayedSubjects[i];
+                          const col = flatColumns[i];
+                          if (!col) return null;
                           return (
-                            <td key={i} className="px-3 py-3 text-center border-l border-slate-100/50">
-                              <CompactEditableScoreCell
-                                reviewee={user}
-                                category={selectedCategory}
-                                subject={subjObj?.label || 'CLJ'}
-                                isAreaActivated={true}
-                                canEditScores={true}
-                                onEdit={handleEditScoreClick}
-                              />
+                            <td key={col.key} className="px-3 py-3 text-center border-l border-slate-100/50">
+                              {col.scoreEventId !== null || col.evaluationDate !== '-' ? (
+                                <CompactEditableScoreCell
+                                  reviewee={user}
+                                  category={selectedCategory}
+                                  subject={col.majorAreaLabel}
+                                  isAreaActivated={true}
+                                  canEditScores={true}
+                                  onEdit={handleEditScoreClick}
+                                  overrideScore={{
+                                    earnedScore: s.score,
+                                    possiblePoints: s.total
+                                  }}
+                                />
+                              ) : (
+                                <span className="text-slate-300 font-bold">—</span>
+                              )}
                             </td>
                           );
                         })}

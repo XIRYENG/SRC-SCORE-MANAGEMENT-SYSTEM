@@ -22,14 +22,17 @@ export type ScoreFolderType =
   | 'phase_3'
   | 'marathon'
   | 'final_coaching'
+  | 'comprehensive_final_coaching'
   | 'pre_board_series'
-  | 'custom';
+  | 'custom'
+  | (string & {});
 
 export interface ScoreFolder {
   id: string;
   name: string;
   normalizedName: string;
   type: ScoreFolderType;
+  folderType?: ScoreFolderType;
   description?: string;
   startDate: any;
   endDate: any | null;

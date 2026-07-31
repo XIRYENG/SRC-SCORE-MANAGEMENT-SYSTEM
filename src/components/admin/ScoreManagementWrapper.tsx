@@ -5,6 +5,7 @@ import { ScoreFolder, RevieweeData } from '../../types';
 import { ChevronLeft } from 'lucide-react';
 import { useScoreFolders } from '../../hooks/useScoreFolders';
 import { useScoreManagementPreferences } from '../../hooks/useScoreManagementPreferences';
+import { formatFolderType } from '../../utils/folderScope';
 
 type ScoreManagementWrapperProps = {
   onOpenSyncModal?: (section?: any, tab?: any, folderId?: string) => void;
@@ -60,7 +61,7 @@ export function ScoreManagementWrapper({ onOpenSyncModal, currentUser }: ScoreMa
           <div className="flex items-center gap-2">
             <h2 className="text-sm font-bold text-slate-800">{selectedFolder.name}</h2>
             <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">
-              {selectedFolder.type.replace(/_/g, ' ')}
+              {formatFolderType(selectedFolder.folderType ?? selectedFolder.type)}
             </span>
           </div>
         </div>

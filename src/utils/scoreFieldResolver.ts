@@ -156,6 +156,49 @@ export function getResolvedScore(
   return earnedScore;
 }
 
+export function normalizeEvaluationDate(value: any): string {
+  if (!value) return new Date().toISOString().split('T')[0];
+  let val = value;
+  if (typeof val === 'object' && val !== null) {
+    if (typeof val.toDate === 'function') {
+      val = val.toDate();
+    } else if (typeof val.seconds === 'number') {
+      val = new Date(val.seconds * 1000);
+    }
+  }
+  if (val instanceof Date) {
+    if (isNaN(val.getTime())) return new Date().toISOString().split('T')[0];
+    const yyyy = val.getFullYear();
+    const mm = String(val.getMonth() + 1).padStart(2, '0');
+    const dd = String(val.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  }
+  const str = String(val).trim();
+  if (!str) return new Date().toISOString().split('T')[0];
+  const matchYmd = str.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+  if (matchYmd) {
+    const yyyy = matchYmd[1];
+    const mm = matchYmd[2].padStart(2, '0');
+    const dd = matchYmd[3].padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  }
+  const matchMdy = str.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
+  if (matchMdy) {
+    const mm = matchMdy[1].padStart(2, '0');
+    const dd = matchMdy[2].padStart(2, '0');
+    const yyyy = matchMdy[3];
+    return `${yyyy}-${mm}-${dd}`;
+  }
+  const d = new Date(str);
+  if (!isNaN(d.getTime())) {
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  }
+  return str.replace(/\//g, '-');
+}
+
 export function normalizeScoreCategory(category: string): string {
   const cat = String(category || "").toLowerCase().trim();
   if (cat.includes("preboard")) return "preboard";

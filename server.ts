@@ -1795,10 +1795,28 @@ function mergeUserScoreData(primary: Record<string, any>, secondary: Record<stri
       const q = collection(firestoreDb, "users");
       const querySnapshot = await getDocs(q);
       const users = querySnapshot.docs.map(d => {
-        const data = d.data();
+        const data = d.data() as Record<string, any>;
+        const seqId = String(data.seq_id || data.seqId || data.id_number || data.idNumber || data.student_id || data.srcId || '').trim();
+        const schoolName = String(data.school_name || data.schoolName || data.school || 'CHRIST THE KING COLLEGE DE MARANDING, INC.').trim();
+        const email = String(data.email || data.emailAddress || data.email_address || data.normalizedEmail || '').trim();
+        
+        let createdAt = data.created_at || data.createdAt || data.registered_at || '';
+        if (createdAt && typeof createdAt === 'object' && createdAt.seconds !== undefined) {
+          createdAt = new Date(createdAt.seconds * 1000).toISOString();
+        }
+
         return {
           doc_id: d.id,
-          ...data
+          ...data,
+          seq_id: seqId || data.seq_id || '',
+          seqId: seqId || data.seqId || '',
+          id_number: seqId || data.id_number || '',
+          idNumber: seqId || data.idNumber || '',
+          school_name: schoolName,
+          schoolName: schoolName,
+          email: email || data.email || '',
+          created_at: createdAt || data.created_at || '',
+          createdAt: createdAt || data.createdAt || ''
         };
       });
       res.json(users);
@@ -2992,11 +3010,14 @@ function mergeUserScoreData(primary: Record<string, any>, secondary: Record<stri
 
       const revieweesSnapshot = await getDocs(collection(firestoreDb, "users"));
       let allRecords = revieweesSnapshot.docs
-        .map(doc => ({ doc_id: doc.id, ...(doc.data() as any) }))
-        .filter(r => String(r.status || r.accountStatus || '').toLowerCase() !== 'merged') as any[];
+        .map(doc => ({ ...(doc.data() as any), doc_id: doc.id }))
+        .filter(r => {
+          const st = String(r.status || r.accountStatus || '').toLowerCase();
+          return st !== 'merged' && r.is_merged !== true && r.merged !== true;
+        }) as any[];
       
       if (year && year !== "") {
-        allRecords = allRecords.filter(r => new Date(r.created_at).getFullYear() === parseInt(year));
+        allRecords = allRecords.filter(r => new Date(r.created_at || r.createdAt || 0).getFullYear() === parseInt(year));
       }
 
       console.log("Analyzing duplicates, record count:", allRecords.length);
@@ -3037,9 +3058,10 @@ function mergeUserScoreData(primary: Record<string, any>, secondary: Record<stri
           const keepSnap = await getDoc(keepRef);
           if (!keepSnap.exists()) continue;
 
-          let keepData: Record<string, any> = { doc_id: keepSnap.id, ...keepSnap.data() };
+          let keepData: Record<string, any> = { ...(keepSnap.data() || {}), doc_id: keepSnap.id };
 
           for (const fromId of mergeFromDocIds) {
+            if (!fromId) continue;
             const fromRef = doc(firestoreDb, "users", fromId);
             const fromSnap = await getDoc(fromRef);
             if (fromSnap.exists()) {
@@ -3055,16 +3077,18 @@ function mergeUserScoreData(primary: Record<string, any>, secondary: Record<stri
       }
 
       // Step 2: Mark secondary duplicate records as merged
-      const toDelete = Array.isArray(recordsToDelete) ? recordsToDelete : [];
+      const toDelete = Array.isArray(recordsToDelete) ? recordsToDelete.filter(Boolean) : [];
       const maxBatchSize = 50;
       for (let i = 0; i < toDelete.length; i += maxBatchSize) {
         const batch = writeBatch(firestoreDb);
         const chunk = toDelete.slice(i, i + maxBatchSize);
         for (const id of chunk) {
+          if (!id) continue;
           const userRef = doc(firestoreDb, "users", id);
           batch.set(userRef, {
             status: 'merged',
             accountStatus: 'merged',
+            is_merged: true,
             mergedAt: new Date().toISOString(),
             mergedBy: req.body.adminId || 'Admin'
           }, { merge: true });

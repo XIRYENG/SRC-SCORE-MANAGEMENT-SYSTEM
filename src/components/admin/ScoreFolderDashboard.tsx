@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Folder, FolderPlus, MoreVertical, Edit, Archive, Trash2, Eye, EyeOff, Calendar, Users, AlertTriangle, Building2, GitBranch } from 'lucide-react';
+import { Folder, FolderPlus, MoreVertical, Edit, Archive, Trash2, Eye, EyeOff, Calendar, Users, AlertTriangle, Building2, GitBranch, Loader2 } from 'lucide-react';
 import { AnimatedDatePicker } from '../ui/animated-date-picker';
 import { AnimatedSelect } from '../ui/animated-select';
 import { ScoreFolder, ScoreFolderType, RevieweeData } from '../../types';
@@ -53,7 +53,7 @@ export function ScoreFolderDashboard({
   const [confirmModal, setConfirmModal] = useState<{
     isOpen: boolean;
     folder: ScoreFolder | null;
-    action: 'delete' | 'archive' | 'bulkDelete' | null;
+    action: 'delete' | 'archive' | 'bulkDelete' | 'hide' | 'publish' | null;
     recordCount: number | null;
     isLoading: boolean;
   }>({ isOpen: false, folder: null, action: null, recordCount: null, isLoading: false });
@@ -73,7 +73,7 @@ export function ScoreFolderDashboard({
     if (!confirmModal.folder || !currentUser) return;
     setConfirmModal(prev => ({ ...prev, isLoading: true }));
     try {
-      await updateDoc(doc(firestoreDb, 'scoreFolders', confirmModal.folder.id), {
+      await updateDoc(doc(firestoreDb, 'score_folders', confirmModal.folder.id), {
         isArchived: true,
         archivedAt: serverTimestamp(),
         archivedBy: currentUser.uid,
@@ -94,8 +94,9 @@ export function ScoreFolderDashboard({
       if (confirmModal.action === 'bulkDelete') {
         await Promise.all(
           Array.from(selectedFolderIds).map(id =>
-            updateDoc(doc(firestoreDb, 'scoreFolders', id), {
+            updateDoc(doc(firestoreDb, 'score_folders', id), {
               isDeleted: true,
+              publicationStatus: 'hidden',
               deletedAt: serverTimestamp(),
               deletedBy: currentUser.uid,
               updatedAt: serverTimestamp(),
@@ -105,8 +106,9 @@ export function ScoreFolderDashboard({
         );
         setSelectedFolderIds(new Set());
       } else {
-        await updateDoc(doc(firestoreDb, 'scoreFolders', confirmModal.folder.id), {
+        await updateDoc(doc(firestoreDb, 'score_folders', confirmModal.folder.id), {
           isDeleted: true,
+          publicationStatus: 'hidden',
           deletedAt: serverTimestamp(),
           deletedBy: currentUser.uid,
           updatedAt: serverTimestamp(),
@@ -120,7 +122,23 @@ export function ScoreFolderDashboard({
     }
   };
 
-  const openConfirmModal = async (folder: ScoreFolder | null, action: 'delete' | 'archive' | 'bulkDelete') => {
+  const handleTogglePublish = async () => {
+    if (!confirmModal.folder || !currentUser) return;
+    setConfirmModal(prev => ({ ...prev, isLoading: true }));
+    try {
+      await updateDoc(doc(firestoreDb, 'score_folders', confirmModal.folder.id), {
+        publicationStatus: confirmModal.action === 'publish' ? 'published' : 'hidden',
+        updatedAt: serverTimestamp(),
+        updatedBy: currentUser.uid
+      });
+      setConfirmModal({ isOpen: false, folder: null, action: null, recordCount: null, isLoading: false });
+    } catch (err) {
+      console.error("Error toggling publish:", err);
+      setConfirmModal(prev => ({ ...prev, isLoading: false }));
+    }
+  };
+
+  const openConfirmModal = async (folder: ScoreFolder | null, action: 'delete' | 'archive' | 'bulkDelete' | 'hide' | 'publish') => {
     setConfirmModal({ isOpen: true, folder, action, recordCount: null, isLoading: true });
     try {
       if (action === 'bulkDelete') {
@@ -196,6 +214,7 @@ export function ScoreFolderDashboard({
               onEdit={setEditingFolder} 
               onArchive={() => openConfirmModal(folder, 'archive')}
               onDelete={() => openConfirmModal(folder, 'delete')}
+              onTogglePublish={(action) => openConfirmModal(folder, action)}
               isSelected={selectedFolderIds.has(folder.id)}
               onToggleSelection={() => toggleFolderSelection(folder.id)}
             />
@@ -215,8 +234,50 @@ export function ScoreFolderDashboard({
         </div>
       )}
 
+      {/* We intercept hide/publish with a custom modal since ConfirmActionModal requires typing */}
+      <AnimatePresence>
+        {(confirmModal.action === 'hide' || confirmModal.action === 'publish') && confirmModal.isOpen && (
+          <div className="fixed inset-0 z-[1100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              className="w-full max-w-sm bg-white border border-slate-200 rounded-3xl shadow-2xl overflow-hidden p-6 space-y-4"
+            >
+              <h3 className="text-lg font-bold text-slate-900">
+                {confirmModal.action === 'hide' ? 'Hide this Score Folder from Reviewees?' : 'Publish this Score Folder to Reviewees?'}
+              </h3>
+              <p className="text-sm text-slate-500 font-medium leading-relaxed">
+                {confirmModal.action === 'hide'
+                  ? 'This will remove the folder and its scores from the Reviewee Portal. Existing records will not be deleted.'
+                  : 'Eligible Reviewees matching the folder’s School and Branch scope will be able to view it.'}
+              </p>
+              <div className="flex items-center justify-end gap-3 mt-6 pt-4 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setConfirmModal(prev => ({ ...prev, isOpen: false, folder: null, action: null }))}
+                  disabled={confirmModal.isLoading}
+                  className="px-4 py-2.5 rounded-xl text-sm font-bold text-slate-600 hover:text-slate-800 hover:bg-slate-100 transition-all disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleTogglePublish}
+                  disabled={confirmModal.isLoading}
+                  className={`px-5 py-2.5 rounded-xl text-sm font-black text-white transition-all disabled:opacity-50 flex items-center gap-2 ${confirmModal.action === 'hide' ? 'bg-amber-600 hover:bg-amber-700 shadow-sm shadow-amber-200' : 'bg-teal-600 hover:bg-teal-700 shadow-sm shadow-teal-200'}`}
+                >
+                  {confirmModal.isLoading ? <Loader2 size={16} className="animate-spin" /> : confirmModal.action === 'hide' ? <EyeOff size={16} /> : <Eye size={16} />}
+                  {confirmModal.action === 'hide' ? 'Hide Folder' : 'Publish Folder'}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       <ConfirmActionModal 
-        isOpen={confirmModal.isOpen}
+        isOpen={confirmModal.isOpen && confirmModal.action !== 'hide' && confirmModal.action !== 'publish'}
         title={confirmModal.action === 'bulkDelete' ? 'Bulk Delete Folders' : confirmModal.action === 'delete' ? 'Delete Score Folder' : 'Archive Score Folder'}
         subtitle={confirmModal.action === 'bulkDelete' ? 'Permanent Deletion' : confirmModal.action === 'delete' ? 'Permanent Deletion' : 'Folder Archiving'}
         message={
@@ -245,13 +306,14 @@ export function ScoreFolderDashboard({
   );
 }
 
-function FolderCard({ folder, onOpen, currentUser, onEdit, onArchive, onDelete, isSelected, onToggleSelection }: { 
+function FolderCard({ folder, onOpen, currentUser, onEdit, onArchive, onDelete, onTogglePublish, isSelected, onToggleSelection }: { 
   folder: ScoreFolder; 
   onOpen: () => void; 
   currentUser: any; 
   onEdit: (folder: ScoreFolder) => void;
   onArchive: () => void;
   onDelete: () => void;
+  onTogglePublish: (action: 'hide' | 'publish') => void;
   isSelected: boolean;
   onToggleSelection: () => void;
 }) {
@@ -259,19 +321,6 @@ function FolderCard({ folder, onOpen, currentUser, onEdit, onArchive, onDelete, 
   const scopeDisplay = formatFolderScopeDisplay(folder);
 
   const isAdmin = currentUser?.role === 'Admin';
-
-  const togglePublish = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    try {
-      await updateDoc(doc(firestoreDb, 'scoreFolders', folder.id), {
-        publicationStatus: folder.publicationStatus === 'published' ? 'hidden' : 'published',
-        updatedAt: serverTimestamp(),
-        updatedBy: currentUser?.uid || 'unknown'
-      });
-    } catch (err) {
-      console.error("Error toggling publish:", err);
-    }
-  };
 
   return (
     <div 
@@ -320,10 +369,10 @@ function FolderCard({ folder, onOpen, currentUser, onEdit, onArchive, onDelete, 
                     <Edit size={16} className="text-slate-500" /> Edit
                   </button>
                   <button 
-                    onClick={(e) => { setIsMenuOpen(false); togglePublish(e); }}
+                    onClick={(e) => { e.stopPropagation(); setIsMenuOpen(false); onTogglePublish(folder.publicationStatus === 'published' ? 'hide' : 'publish'); }}
                     className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 font-medium transition-colors"
                   >
-                    {folder.publicationStatus === 'published' ? <><EyeOff size={16} className="text-slate-500" /> Hide</> : <><Eye size={16} className="text-slate-500" /> Publish</>}
+                    {folder.publicationStatus === 'published' ? <><EyeOff size={16} className="text-slate-500" /> Hide from Reviewees</> : <><Eye size={16} className="text-slate-500" /> Publish to Reviewees</>}
                   </button>
                   <button 
                     onClick={(e) => { e.stopPropagation(); setIsMenuOpen(false); onArchive(); }}
@@ -351,7 +400,7 @@ function FolderCard({ folder, onOpen, currentUser, onEdit, onArchive, onDelete, 
         <div className="flex items-center justify-between gap-2 mb-1">
           <h3 className="text-lg font-bold text-slate-900 tracking-tight">{folder.name}</h3>
           <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-teal-50 text-teal-700 border border-teal-100 shrink-0">
-            {formatFolderType(folder.type)}
+            {formatFolderType(folder.folderType ?? folder.type)}
           </span>
         </div>
         {folder.description && (

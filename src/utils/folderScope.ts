@@ -1,5 +1,6 @@
 import { ScoreFolder, RevieweeData } from '../types';
 import { resolveCanonicalUserIdentity } from '../services/userIdentityResolver';
+import { FOLDER_TYPE_LABELS, normalizeFolderType, getFolderTypeLabel } from '../constants/folderTypes';
 
 export function normalizeScopeString(val: unknown): string {
   if (!val) return '';
@@ -71,6 +72,36 @@ export function getRevieweeBranchInfo(reviewee: any): { branchId: string; branch
   const normKey = normalizeScopeString(nameTrimmed);
 
   return { branchId: normKey || 'unassigned', branchName: nameTrimmed };
+}
+
+import { normalizeScoreFolder } from '../constants/folderTypes';
+
+/**
+ * Validates if a folder is visible to a specific reviewee.
+ * Checks for publicationStatus, archived, deleted, school/branch scope, and active account status.
+ */
+export function isFolderVisibleToReviewee(
+  folder: any,
+  reviewee: any
+): boolean {
+  if (!folder) return false;
+  const normalized = normalizeScoreFolder(folder);
+  if (!normalized) return false;
+
+  // Enforce account check if reviewee is provided
+  if (reviewee && reviewee.accountStatus && reviewee.accountStatus.toLowerCase() !== 'active') {
+    // If the reviewee has a status, it must be active (or empty/undefined which passes)
+    if (reviewee.accountStatus.toLowerCase() === 'inactive' || reviewee.accountStatus.toLowerCase() === 'deleted') {
+      return false;
+    }
+  }
+
+  return (
+    normalized.publicationStatus === "published" &&
+    normalized.isArchived !== true &&
+    normalized.isDeleted !== true &&
+    isRevieweeInFolderScope(reviewee, normalized as any)
+  );
 }
 
 /**
@@ -202,38 +233,8 @@ export function formatFolderScopeDisplay(folder: ScoreFolder): {
   };
 }
 
-export function normalizeFolderType(type?: string): string {
-  if (!type) return 'phase_1';
-  const clean = type.toLowerCase().trim().replace(/[\s-]+/g, '_');
-  if (['phase_1', 'phase1', 'phase_1_eval'].includes(clean)) return 'phase_1';
-  if (['phase_2', 'phase2'].includes(clean)) return 'phase_2';
-  if (['phase_3', 'phase3'].includes(clean)) return 'phase_3';
-  if (['marathon'].includes(clean)) return 'marathon';
-  if (['final_coaching', 'finalcoaching'].includes(clean)) return 'final_coaching';
-  if (['pre_board_series', 'preboard', 'preboardseries', 'pre_board'].includes(clean)) return 'pre_board_series';
-  if (['custom'].includes(clean)) return 'custom';
-  return type;
-}
+export { normalizeFolderType };
 
 export function formatFolderType(type?: string): string {
-  if (!type) return 'Custom';
-  const clean = type.toLowerCase().trim().replace(/[\s-]+/g, '_');
-  switch (clean) {
-    case 'phase_1':
-      return 'Phase 1';
-    case 'phase_2':
-      return 'Phase 2';
-    case 'phase_3':
-      return 'Phase 3';
-    case 'marathon':
-      return 'Marathon';
-    case 'final_coaching':
-      return 'Final Coaching';
-    case 'pre_board_series':
-      return 'Pre-Board Series';
-    case 'custom':
-      return 'Custom';
-    default:
-      return type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-  }
+  return getFolderTypeLabel(type);
 }

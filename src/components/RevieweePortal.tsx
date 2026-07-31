@@ -28,10 +28,11 @@ import { doc, updateDoc, serverTimestamp, onSnapshot } from 'firebase/firestore'
 import { DEFAULT_GRADE_WEIGHTS, GradeWeights, SubjectArea, GRADE_CATEGORY_LABELS, GradeCategoryKey } from '../utils/gradeCalculation';
 import { calculateRevieweeArea } from '../utils/calculateRevieweeArea';
 import { useScoreFolders } from '../hooks/useScoreFolders';
+import { isFolderVisibleToReviewee } from '../utils/folderScope';
 import { AreaPerformanceCircle } from './AreaPerformanceCircle';
 import { AreaPerformanceModal } from './performance/AreaPerformanceModal';
 import { getResolvedScore } from '../utils/scoreFieldResolver';
-import { isValidRevieweeRecord } from '../services/userIdentityResolver';
+import { isValidRevieweeRecord, resolveCanonicalUserIdentity } from '../services/userIdentityResolver';
 import { UserAvatar } from './UserAvatar';
 import { PortalBottomMenu } from './ui/portal-bottom-menu';
 
@@ -60,7 +61,10 @@ export function RevieweePortal({ data, onLogout }: { data: RevieweeData, onLogou
     return localStorage.getItem('reviewee_active_tab') || 'dashboard';
   });
   const { allUsers } = useFirestoreUsers();
-  const { folders: allScoreFolders } = useScoreFolders();
+  const { folders: rawScoreFolders } = useScoreFolders();
+  const allScoreFolders = useMemo(() => {
+    return rawScoreFolders.filter(f => isFolderVisibleToReviewee(f, revieweeData));
+  }, [rawScoreFolders, revieweeData]);
   const { notifications } = useNotifications(firestoreDb, data.uid || "");
   
   const unreadCount = useMemo(() => notifications.filter(n => !n.isRead).length, [notifications]);
@@ -114,11 +118,8 @@ export function RevieweePortal({ data, onLogout }: { data: RevieweeData, onLogou
 
   const handleAreaCardClick = (subjectLabel: string, subjectKey: SubjectArea) => {
     const result = calculateRevieweeArea(revieweeData, subjectKey, gradeWeights, "include", undefined, allUsers, allScoreFolders);
-    const name = [
-      revieweeData.first_name,
-      revieweeData.middle_name,
-      revieweeData.last_name
-    ].filter(Boolean).join(' ').trim() || "Reviewee";
+    const canonical = resolveCanonicalUserIdentity(revieweeData);
+    const name = canonical.fullName || "Reviewee";
     setSelectedSubjectBreakdown({
       subject: subjectLabel,
       revieweeName: name,
@@ -254,7 +255,7 @@ export function RevieweePortal({ data, onLogout }: { data: RevieweeData, onLogou
     date: s.date || '—',
   })), [scores]);
 
-  const revieweeName = `${revieweeData.first_name || ''} ${revieweeData.middle_name ? revieweeData.middle_name + ' ' : ''}${revieweeData.last_name || ''}`.trim() || 'Reviewee';
+  const revieweeName = resolveCanonicalUserIdentity(revieweeData).fullName || 'Reviewee';
 
   const renderDashboard = () => (
     <div className="space-y-6">

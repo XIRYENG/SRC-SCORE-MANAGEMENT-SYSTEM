@@ -7,7 +7,8 @@ import { AnimatedSelect } from '../ui/animated-select';
 import { FolderScopeConfig } from './FolderScopeConfig';
 import { motion } from 'motion/react';
 import { AlertTriangle } from 'lucide-react';
-import { normalizeFolderType } from '../../utils/folderScope';
+import { normalizeFolderType, formatFolderType } from '../../utils/folderScope';
+import { STANDARD_FOLDER_TYPES, AVAILABLE_FOLDER_TYPES } from '../../constants/folderTypes';
 
 // You might need to import these or move them to a shared types/constants file
 const DEFAULT_SCHOOL_OPTIONS = [
@@ -28,9 +29,60 @@ interface FolderModalProps {
 }
 
 export function FolderModal({ onClose, currentUser, initialFolder }: FolderModalProps) {
+  const [showConfirmEdit, setShowConfirmEdit] = useState(false);
+
+  const formatSchoolScopeChanges = () => {
+    const oldScope = initialFolder?.schoolScope || 'all';
+    const newScope = formData.schoolScope;
+    if (oldScope === newScope) {
+      if (newScope === 'selected') {
+        const oldIds = initialFolder?.selectedSchoolIds || [];
+        const added = formData.selectedSchoolIds.filter(id => !oldIds.includes(id));
+        const removed = oldIds.filter(id => !formData.selectedSchoolIds.includes(id));
+        if (added.length === 0 && removed.length === 0) return 'Unchanged (Selected Schools)';
+        return `Selected Schools updated: +${added.length} added, -${removed.length} removed`;
+      }
+      return 'Unchanged (All Schools)';
+    }
+    return `Changed from ${oldScope === 'all' ? 'All Schools' : 'Selected Schools'} to ${newScope === 'all' ? 'All Schools' : 'Selected Schools'}`;
+  };
+
+  const formatBranchScopeChanges = () => {
+    const oldScope = initialFolder?.branchScope || 'all';
+    const newScope = formData.branchScope;
+    if (oldScope === newScope) {
+      if (newScope === 'selected') {
+        const oldIds = initialFolder?.selectedBranchIds || [];
+        const added = formData.selectedBranchIds.filter(id => !oldIds.includes(id));
+        const removed = oldIds.filter(id => !formData.selectedBranchIds.includes(id));
+        if (added.length === 0 && removed.length === 0) return 'Unchanged (Selected Branches)';
+        return `Selected Branches updated: +${added.length} added, -${removed.length} removed`;
+      }
+      return 'Unchanged (All Branches)';
+    }
+    return `Changed from ${oldScope === 'all' ? 'All Branches' : 'Selected Branches'} to ${newScope === 'all' ? 'All Branches' : 'Selected Branches'}`;
+  };
+
+  const getInitialType = () => {
+    const rawType = initialFolder?.folderType ?? initialFolder?.type;
+    const normalized = normalizeFolderType(rawType);
+    if (!normalized) return 'phase_1';
+    if (STANDARD_FOLDER_TYPES.includes(normalized)) return normalized;
+    return 'custom';
+  };
+
+  const getInitialCustomTypeName = () => {
+    const rawType = initialFolder?.folderType ?? initialFolder?.type;
+    const normalized = normalizeFolderType(rawType);
+    if (!normalized) return '';
+    if (STANDARD_FOLDER_TYPES.includes(normalized)) return '';
+    return rawType || '';
+  };
+
   const [formData, setFormData] = useState({
     name: initialFolder?.name || '',
-    type: normalizeFolderType(initialFolder?.type),
+    type: getInitialType(),
+    customTypeName: getInitialCustomTypeName(),
     description: initialFolder?.description || '',
 
     schoolScope: (initialFolder?.schoolScope || 'all') as 'all' | 'selected',
@@ -48,9 +100,15 @@ export function FolderModal({ onClose, currentUser, initialFolder }: FolderModal
   });
 
   useEffect(() => {
+    const rawType = initialFolder?.folderType ?? initialFolder?.type;
+    const normalized = normalizeFolderType(rawType);
+    const initialType = !normalized ? 'phase_1' : (STANDARD_FOLDER_TYPES.includes(normalized) ? normalized : 'custom');
+    const initialCustomTypeName = !normalized ? '' : (STANDARD_FOLDER_TYPES.includes(normalized) ? '' : (rawType || ''));
+
     setFormData({
       name: initialFolder?.name || '',
-      type: normalizeFolderType(initialFolder?.type),
+      type: initialType,
+      customTypeName: initialCustomTypeName,
       description: initialFolder?.description || '',
 
       schoolScope: (initialFolder?.schoolScope || 'all') as 'all' | 'selected',
@@ -66,7 +124,7 @@ export function FolderModal({ onClose, currentUser, initialFolder }: FolderModal
       includeInReadiness: initialFolder?.includeInReadiness ?? true,
       readinessWeight: initialFolder?.readinessWeight || 10
     });
-  }, [initialFolder]);
+  }, [initialFolder?.id, initialFolder]);
 
   const [availableSchools, setAvailableSchools] = useState<{ id: string; name: string }[]>(DEFAULT_SCHOOL_OPTIONS);
   const [availableBranches, setAvailableBranches] = useState<{ id: string; name: string }[]>(DEFAULT_BRANCH_OPTIONS);
@@ -135,9 +193,19 @@ export function FolderModal({ onClose, currentUser, initialFolder }: FolderModal
     }
   }, [formData.schoolScope, formData.selectedSchoolIds, formData.branchScope, formData.selectedBranchIds, initialFolder]);
 
-  // Handle form submission
+   // Handle form submission
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (!formData.type || formData.type.trim() === '') {
+      alert('Folder Type cannot be empty.');
+      return;
+    }
+
+    if (formData.type === 'custom' && (!formData.customTypeName || formData.customTypeName.trim() === '')) {
+      alert('Please enter a custom folder type name.');
+      return;
+    }
 
     // Validate School Scope
     if (formData.schoolScope === 'selected' && formData.selectedSchoolIds.length === 0) {
@@ -155,7 +223,16 @@ export function FolderModal({ onClose, currentUser, initialFolder }: FolderModal
       setBranchError(null);
     }
 
-    // Clean data according to selection rule
+    if (initialFolder && !showConfirmEdit) {
+      setShowConfirmEdit(true);
+      return;
+    }
+
+    await performSave();
+  };
+
+  const performSave = async () => {
+    const finalType = formData.type === 'custom' ? formData.customTypeName.trim() : formData.type;
     const finalSchoolIds = formData.schoolScope === 'all' ? [] : formData.selectedSchoolIds;
     const finalSchoolNames = formData.schoolScope === 'all' ? [] : formData.selectedSchoolNames;
     const finalBranchIds = formData.branchScope === 'all' ? [] : formData.selectedBranchIds;
@@ -163,10 +240,12 @@ export function FolderModal({ onClose, currentUser, initialFolder }: FolderModal
 
     try {
       if (initialFolder) {
-        await updateDoc(doc(firestoreDb, 'scoreFolders', initialFolder.id), {
+        const docRef = doc(firestoreDb, 'score_folders', initialFolder.id);
+        await updateDoc(docRef, {
           name: formData.name,
           normalizedName: formData.name.toLowerCase().trim(),
-          type: formData.type,
+          type: finalType,
+          folderType: finalType,
           description: formData.description,
 
           schoolScope: formData.schoolScope,
@@ -184,13 +263,28 @@ export function FolderModal({ onClose, currentUser, initialFolder }: FolderModal
           updatedAt: serverTimestamp(),
           updatedBy: currentUser?.uid || 'unknown'
         });
+
+        // Write activity/audit log
+        const logRef = doc(collection(firestoreDb, 'activity_logs'));
+        await setDoc(logRef, {
+          user_id: initialFolder.id,
+          user_name: formData.name,
+          action: 'update_score_folder',
+          details: `Updated score folder "${formData.name}". Type: ${initialFolder.folderType ?? initialFolder.type} -> ${finalType}. Publication: ${initialFolder.publicationStatus} -> ${formData.publicationStatus}.`,
+          performed_by: currentUser?.email || currentUser?.uid || 'unknown',
+          timestamp: serverTimestamp(),
+          created_at: new Date().toISOString()
+        });
+
+        alert('Score Folder updated successfully.');
       } else {
-        const folderRef = doc(collection(firestoreDb, 'scoreFolders'));
+        const folderRef = doc(collection(firestoreDb, 'score_folders'));
         await setDoc(folderRef, {
           id: folderRef.id,
           name: formData.name,
           normalizedName: formData.name.toLowerCase().trim(),
-          type: formData.type,
+          type: finalType,
+          folderType: finalType,
           description: formData.description,
 
           schoolScope: formData.schoolScope,
@@ -212,6 +306,18 @@ export function FolderModal({ onClose, currentUser, initialFolder }: FolderModal
           createdAt: serverTimestamp(),
           updatedBy: currentUser?.uid || 'unknown',
           updatedAt: serverTimestamp()
+        });
+
+        // Write audit log
+        const logRef = doc(collection(firestoreDb, 'activity_logs'));
+        await setDoc(logRef, {
+          user_id: folderRef.id,
+          user_name: formData.name,
+          action: 'create_score_folder',
+          details: `Created score folder "${formData.name}" with type "${finalType}"`,
+          performed_by: currentUser?.email || currentUser?.uid || 'unknown',
+          timestamp: serverTimestamp(),
+          created_at: new Date().toISOString()
         });
       }
       onClose();
@@ -242,14 +348,59 @@ export function FolderModal({ onClose, currentUser, initialFolder }: FolderModal
         className="relative w-full max-w-xl rounded-2xl bg-white shadow-xl overflow-hidden flex flex-col max-h-[90vh]"
       >
         <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
-          <h2 className="text-lg font-bold text-slate-900">{initialFolder ? 'Edit Score Folder' : 'Create Score Folder'}</h2>
+          <h2 className="text-lg font-bold text-slate-900">
+            {showConfirmEdit ? 'Confirm Folder Changes' : (initialFolder ? 'Edit Score Folder' : 'Create Score Folder')}
+          </h2>
           <button onClick={onClose} className="rounded-full p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
           </button>
         </div>
         
-        <div className="flex-1 overflow-y-auto p-6 space-y-5">
-          <form id="folder-form" onSubmit={handleSubmit} className="space-y-5">
+        {showConfirmEdit ? (
+          <div className="flex-1 overflow-y-auto p-6 space-y-4">
+            <p className="text-sm text-slate-600 font-semibold">Please review the proposed changes before finalizing:</p>
+            <div className="space-y-3 bg-slate-50 p-5 rounded-2xl border border-slate-200">
+              <div className="grid grid-cols-3 gap-2 py-1.5 border-b border-slate-200/50">
+                <span className="text-xs font-bold text-slate-500 uppercase">Folder Name</span>
+                <span className="text-sm font-semibold text-slate-900 col-span-2">{formData.name}</span>
+              </div>
+              <div className="grid grid-cols-3 gap-2 py-1.5 border-b border-slate-200/50">
+                <span className="text-xs font-bold text-slate-500 uppercase">Current Type</span>
+                <span className="text-sm font-semibold text-slate-700">{formatFolderType(initialFolder?.folderType ?? initialFolder?.type)}</span>
+              </div>
+              <div className="grid grid-cols-3 gap-2 py-1.5 border-b border-slate-200/50">
+                <span className="text-xs font-bold text-slate-500 uppercase">New Type</span>
+                <span className="text-sm font-black text-teal-600">{formatFolderType(formData.type)}</span>
+              </div>
+              <div className="grid grid-cols-3 gap-2 py-1.5 border-b border-slate-200/50">
+                <span className="text-xs font-bold text-slate-500 uppercase">Schools Scope</span>
+                <span className="text-sm font-semibold text-slate-800 col-span-2">{formatSchoolScopeChanges()}</span>
+              </div>
+              <div className="grid grid-cols-3 gap-2 py-1.5 border-b border-slate-200/50">
+                <span className="text-xs font-bold text-slate-500 uppercase">Branches Scope</span>
+                <span className="text-sm font-semibold text-slate-800 col-span-2">{formatBranchScopeChanges()}</span>
+              </div>
+              <div className="grid grid-cols-3 gap-2 py-1.5">
+                <span className="text-xs font-bold text-slate-500 uppercase">Publication</span>
+                <span className="text-sm font-semibold text-slate-800 col-span-2">
+                  {initialFolder?.publicationStatus !== formData.publicationStatus 
+                    ? `Changed from ${initialFolder?.publicationStatus} to ${formData.publicationStatus}`
+                    : `Unchanged (${formData.publicationStatus})`}
+                </span>
+              </div>
+            </div>
+            {showScopeWarning && (
+              <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 flex items-start gap-3">
+                <AlertTriangle size={18} className="text-amber-600 shrink-0 mt-0.5" />
+                <p className="text-xs font-semibold text-amber-900 leading-relaxed">
+                  Changing this folder's school or branch scope may hide some reviewees and their scores from this folder. Existing records will not be deleted.
+                </p>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="flex-1 overflow-y-auto p-6 space-y-5">
+            <form id="folder-form" onSubmit={handleSubmit} className="space-y-5">
             <div>
               <label className="block text-sm font-bold text-slate-700 mb-1">Folder Name <span className="text-rose-500">*</span></label>
               <input 
@@ -266,18 +417,29 @@ export function FolderModal({ onClose, currentUser, initialFolder }: FolderModal
               <label className="block text-sm font-bold text-slate-700 mb-1">Folder Type</label>
               <AnimatedSelect 
                 value={formData.type}
-                options={[
-                  { value: 'phase_1', label: 'Phase 1' },
-                  { value: 'phase_2', label: 'Phase 2' },
-                  { value: 'phase_3', label: 'Phase 3' },
-                  { value: 'marathon', label: 'Marathon' },
-                  { value: 'final_coaching', label: 'Final Coaching' },
-                  { value: 'pre_board_series', label: 'Pre-Board Series' },
-                  { value: 'custom', label: 'Custom' },
-                ]}
-                onChange={val => setFormData({...formData, type: val as any})}
+                options={AVAILABLE_FOLDER_TYPES}
+                onChange={val => {
+                  setFormData(prev => ({
+                    ...prev,
+                    type: val as any,
+                    customTypeName: val === 'custom' ? prev.customTypeName : ''
+                  }));
+                }}
                 searchable={false}
               />
+              {formData.type === 'custom' && (
+                <div className="mt-2.5 animate-in fade-in-50 duration-200">
+                  <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Custom Folder Type (Manual Name) <span className="text-rose-500">*</span></label>
+                  <input 
+                    required
+                    type="text"
+                    value={formData.customTypeName}
+                    onChange={e => setFormData(prev => ({ ...prev, customTypeName: e.target.value }))}
+                    placeholder="e.g., Diagnostic Exam, Board Preparation" 
+                    className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500 transition-shadow placeholder:text-slate-400"
+                  />
+                </div>
+              )}
             </div>
 
             <div>
@@ -358,30 +520,52 @@ export function FolderModal({ onClose, currentUser, initialFolder }: FolderModal
               </div>
             )}
           </form>
-        </div>
+          </div>
+        )}
         
         <div className="border-t border-slate-100 bg-slate-50 px-6 py-4 flex justify-end gap-3">
-          <button 
-            type="button" 
-            onClick={onClose}
-            className="rounded-xl px-4 py-2.5 text-sm font-bold text-slate-600 hover:bg-slate-200 transition-colors"
-          >
-            Cancel
-          </button>
-          <button 
-            type="submit" 
-            form="folder-form"
-            disabled={!isFormValid}
-            className={`rounded-xl px-6 py-2.5 text-sm font-bold text-white shadow-sm transition-all active:scale-95 ${
-              isFormValid
-                ? 'bg-teal-600 hover:bg-teal-500'
-                : 'bg-slate-300 cursor-not-allowed'
-            }`}
-          >
-            {initialFolder 
-              ? (showScopeWarning ? 'Update Folder Scope' : 'Save Changes') 
-              : 'Create Folder'}
-          </button>
+          {showConfirmEdit ? (
+            <>
+              <button 
+                type="button" 
+                onClick={() => setShowConfirmEdit(false)}
+                className="rounded-xl px-4 py-2.5 text-sm font-bold text-slate-600 hover:bg-slate-200 transition-colors"
+              >
+                Back to Edit
+              </button>
+              <button 
+                type="button" 
+                onClick={performSave}
+                className="rounded-xl px-6 py-2.5 text-sm font-bold text-white bg-teal-600 hover:bg-teal-500 shadow-sm transition-all active:scale-95"
+              >
+                Confirm & Update
+              </button>
+            </>
+          ) : (
+            <>
+              <button 
+                type="button" 
+                onClick={onClose}
+                className="rounded-xl px-4 py-2.5 text-sm font-bold text-slate-600 hover:bg-slate-200 transition-colors"
+              >
+                Cancel
+              </button>
+              <button 
+                type="submit" 
+                form="folder-form"
+                disabled={!isFormValid}
+                className={`rounded-xl px-6 py-2.5 text-sm font-bold text-white shadow-sm transition-all active:scale-95 ${
+                  isFormValid
+                    ? 'bg-teal-600 hover:bg-teal-500'
+                    : 'bg-slate-300 cursor-not-allowed'
+                }`}
+              >
+                {initialFolder 
+                  ? (showScopeWarning ? 'Update Folder Scope' : 'Save Changes') 
+                  : 'Create Folder'}
+              </button>
+            </>
+          )}
         </div>
       </motion.div>
     </div>

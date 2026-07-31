@@ -35,6 +35,7 @@ import { getUserRole, isReviewee } from '../utils/roleUtils';
 import { AnimatedDatePicker } from './ui/animated-date-picker';
 import { isValidRevieweeRecord } from '../services/userIdentityResolver';
 import { getCanonicalFullName, normalizeNameForComparison } from '../utils/nameNormalization';
+import { resolveCanonicalUserIdentity } from '../services/userIdentityResolver';
 import { collection, doc, getDocs, setDoc, serverTimestamp } from 'firebase/firestore';
 import { firestoreDb } from '../utils/firebaseClient';
 import { normalizeScoreCategory } from '../utils/scoreFieldResolver';
@@ -701,7 +702,7 @@ export const ScoreUploader: React.FC<ScoreUploaderProps> = ({
           ...r,
           matchedUser: user,
           matchedUserId: userDocId,
-          matchedUserName: `${user.last_name || user.lastName || ''}, ${user.first_name || user.firstName || ''}`.trim() || user.email || 'Reviewee',
+          matchedUserName: resolveCanonicalUserIdentity(user).fullName,
           matchedRevieweeDocumentId: user.doc_id || user.id || userDocId || null,
           matchedRevieweeUid: user.uid || null,
           matchedRevieweeId: userDocId || user.id || null,
@@ -1374,7 +1375,7 @@ export const ScoreUploader: React.FC<ScoreUploaderProps> = ({
                     <div className="flex items-center gap-2">
                       <h3 className="text-xl font-black text-slate-900">Score Import Matching Preview</h3>
                       <span className="bg-blue-100 text-blue-700 text-xs font-extrabold px-2.5 py-0.5 rounded-full uppercase">
-                        {selectedSubject} — {selectedCategory}
+                        {selectedSubject} — {selectedCategory} {selectedDate ? `(${selectedDate})` : ''}
                       </span>
                     </div>
                     <p className="text-xs text-slate-500 mt-0.5">

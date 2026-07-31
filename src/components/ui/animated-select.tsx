@@ -131,6 +131,7 @@ export function AnimatedSelect({
   return (
     <div className={cn("relative w-full min-w-0", className)}>
       <button
+        type="button"
         id={id}
         ref={refs.setReference}
         {...getReferenceProps()}
@@ -206,6 +207,7 @@ export function AnimatedSelect({
                           />
                           {query && (
                             <button
+                              type="button"
                               onClick={() => setQuery("")}
                               className="absolute right-3.5 p-1 text-slate-400 hover:text-slate-600"
                             >
@@ -221,6 +223,7 @@ export function AnimatedSelect({
                         {filteredOptions.length > 0 ? (
                           filteredOptions.map((option) => (
                             <button
+                              type="button"
                               key={option.value}
                               onClick={() => handleSelect(option.value)}
                               className={cn(
@@ -282,6 +285,7 @@ export function AnimatedSelect({
                         <div className="sticky top-0 z-10 flex items-center justify-between border-b bg-white px-4 py-3">
                           <span className="text-sm font-bold text-slate-900">{label || placeholder}</span>
                           <button
+                            type="button"
                             onClick={() => setIsOpen(false)}
                             className="flex h-8 w-8 items-center justify-center rounded-full hover:bg-slate-100 transition-colors"
                           >
@@ -302,6 +306,7 @@ export function AnimatedSelect({
                             />
                             {query && (
                               <button
+                                type="button"
                                 onClick={() => setQuery("")}
                                 className="absolute right-2 p-1 text-slate-400 hover:text-slate-600"
                               >
@@ -316,6 +321,7 @@ export function AnimatedSelect({
                         {filteredOptions.length > 0 ? (
                           filteredOptions.map((option) => (
                             <button
+                              type="button"
                               key={option.value}
                               onClick={() => handleSelect(option.value)}
                               className={cn(

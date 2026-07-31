@@ -36,6 +36,10 @@ export const FIRST_NAME_FIELDS = [
   'given_name',
   'givenName',
   'First Name',
+  'firstname',
+  'first_Name',
+  'fname',
+  'First_Name',
 ];
 
 export const MIDDLE_NAME_FIELDS = [
@@ -45,6 +49,9 @@ export const MIDDLE_NAME_FIELDS = [
   'middleInitial',
   'mi',
   'Middle Name',
+  'middlename',
+  'mname',
+  'Middle_Name',
 ];
 
 export const LAST_NAME_FIELDS = [
@@ -54,6 +61,9 @@ export const LAST_NAME_FIELDS = [
   'family_name',
   'familyName',
   'Last Name',
+  'lastname',
+  'lname',
+  'Last_Name',
 ];
 
 export const FULL_NAME_FIELDS = [
@@ -70,17 +80,81 @@ export const FULL_NAME_FIELDS = [
   'adminName',
   'user_name',
   'userName',
+  'student_name',
+  'studentName',
+  'Full Name',
+  'Name',
 ];
 
 /**
- * Gets the first non-empty string value from a set of possible field keys.
+ * Resolves the canonical ID number of a user record across all possible identifier fields.
+ */
+export function getCanonicalIdNumber(user: UserLike): string {
+  if (!user || typeof user !== 'object') return '';
+
+  const sources = [
+    user,
+    user.profile,
+    user.personalInfo,
+    user.reviewee,
+    user.data,
+    user.user
+  ];
+
+  const keys = [
+    'seq_id', 'seqId',
+    'id_number', 'idNumber',
+    'src_id', 'srcId',
+    'student_id', 'studentId',
+    'official_id_number', 'officialIdNumber',
+    'employee_id', 'employeeId',
+    'registration_id', 'registrationId',
+    'reviewee_id', 'revieweeId',
+    'staff_id', 'staffId',
+    'admin_id', 'adminId',
+    'ID Number', 'ID', 'Id'
+  ];
+
+  for (const src of sources) {
+    if (src && typeof src === 'object') {
+      for (const k of keys) {
+        const val = src[k];
+        if (val !== undefined && val !== null && String(val).trim() !== '') {
+          const str = String(val).trim();
+          if (str && str.toUpperCase() !== 'N/A' && str.toUpperCase() !== 'NONE' && str !== '-') {
+            return str;
+          }
+        }
+      }
+    }
+  }
+
+  return '';
+}
+
+/**
+ * Gets the first non-empty string value from a set of possible field keys across top-level and nested objects.
  */
 export function getFirstNonEmptyValue(source: UserLike, fields: string[]): string {
   if (!source || typeof source !== 'object') return '';
-  for (const field of fields) {
-    const val = source[field];
-    if (typeof val === 'string' && val.trim()) {
-      return val.trim();
+
+  const targets = [
+    source,
+    source.profile,
+    source.personalInfo,
+    source.reviewee,
+    source.data,
+    source.user
+  ];
+
+  for (const target of targets) {
+    if (target && typeof target === 'object') {
+      for (const field of fields) {
+        const val = target[field];
+        if (typeof val === 'string' && val.trim()) {
+          return val.trim();
+        }
+      }
     }
   }
   return '';
@@ -252,49 +326,232 @@ export function levenshteinDistance(a: string, b: string): number {
 }
 
 /**
+ * Resolves the canonical birthdate string YYYY-MM-DD (or normalized digits) from user record.
+ */
+export function getCanonicalBirthdate(user: UserLike): string {
+  if (!user || typeof user !== 'object') return '';
+
+  const sources = [
+    user,
+    user.profile,
+    user.personalInfo,
+    user.reviewee,
+    user.data,
+    user.user
+  ];
+
+  const keys = [
+    'birthdate', 'birth_date', 'birthDate',
+    'dob', 'DOB', 'dateOfBirth', 'date_of_birth', 'Date of Birth',
+    'bday', 'birthday', 'Birth Date'
+  ];
+
+  for (const src of sources) {
+    if (src && typeof src === 'object') {
+      for (const k of keys) {
+        const val = src[k];
+        if (val !== undefined && val !== null) {
+          const str = String(val).trim();
+          if (!str || str.toUpperCase() === 'N/A' || str.toUpperCase() === 'NONE' || str === '-') continue;
+
+          // If numeric timestamp (e.g. millis)
+          if (/^\d{9,13}$/.test(str)) {
+            const d = new Date(parseInt(str, 10));
+            if (!isNaN(d.getTime())) {
+              return d.toISOString().split('T')[0];
+            }
+          }
+
+          // If string like YYYY-MM-DD or YYYY/MM/DD or MM/DD/YYYY
+          const d = new Date(str);
+          if (!isNaN(d.getTime()) && d.getFullYear() > 1900 && d.getFullYear() < 2100) {
+            const yyyy = d.getFullYear();
+            const mm = String(d.getMonth() + 1).padStart(2, '0');
+            const dd = String(d.getDate()).padStart(2, '0');
+            return `${yyyy}-${mm}-${dd}`;
+          }
+
+          // Fallback: extract digits if length >= 6
+          const digits = str.replace(/\D/g, '');
+          if (digits.length >= 6) {
+            return digits;
+          }
+        }
+      }
+    }
+  }
+
+  return '';
+}
+
+/**
+ * Resolves contact information (normalized phone digits and normalized email) from user record.
+ */
+export function getCanonicalContactInfo(user: UserLike): { phone: string; email: string } {
+  if (!user || typeof user !== 'object') return { phone: '', email: '' };
+
+  const sources = [
+    user,
+    user.profile,
+    user.personalInfo,
+    user.reviewee,
+    user.data,
+    user.user
+  ];
+
+  const phoneKeys = [
+    'phone', 'phone_number', 'phoneNumber', 'Phone Number', 'Phone',
+    'mobile', 'mobile_number', 'mobileNumber', 'Mobile Number', 'Mobile',
+    'contact_number', 'contactNumber', 'Contact Number', 'contact_no', 'contactNo',
+    'cellphone', 'cellphone_number', 'cellphoneNumber', 'tel', 'telephone'
+  ];
+
+  const emailKeys = [
+    'email', 'user_email', 'userEmail', 'contact_email', 'contactEmail', 'Email', 'User Email'
+  ];
+
+  let foundPhone = '';
+  let foundEmail = '';
+
+  for (const src of sources) {
+    if (src && typeof src === 'object') {
+      if (!foundPhone) {
+        for (const k of phoneKeys) {
+          const val = src[k];
+          if (val !== undefined && val !== null) {
+            const str = String(val).replace(/\D/g, '');
+            if (str.length >= 7) {
+              foundPhone = str.length >= 10 ? str.slice(-10) : str;
+              break;
+            }
+          }
+        }
+      }
+      if (!foundEmail) {
+        for (const k of emailKeys) {
+          const val = src[k];
+          if (val !== undefined && val !== null) {
+            const str = String(val).trim().toLowerCase();
+            if (str && str.includes('@') && !str.endsWith('@example.com') && str !== 'none' && str !== 'n/a') {
+              foundEmail = str;
+              break;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return { phone: foundPhone, email: foundEmail };
+}
+
+/**
  * Compares two records and determines if they match as duplicate names, along with match level & confidence.
+ * Incorporates fuzzy name matching with secondary checks (Birthdate, Contact Info, Shared ID).
  */
 export function compareNamesAndRecords(recA: UserLike, recB: UserLike): MatchResult {
   const cA = getCanonicalFullName(recA);
   const cB = getCanonicalFullName(recB);
 
-  if (!cA.normalizedName || !cB.normalizedName) {
+  if (!cA.normalizedName || !cB.normalizedName || cA.normalizedName === 'unnamed user' || cB.normalizedName === 'unnamed user') {
     return { isMatch: false, confidence: 'none', matchLevel: 0, matchReason: '', badgeText: '', score: 0 };
   }
 
-  // Supporting identifiers
-  const emailA = String(recA.email || recA.user_email || '').trim().toLowerCase();
-  const emailB = String(recB.email || recB.user_email || '').trim().toLowerCase();
-  const sameEmail = Boolean(emailA && emailB && emailA === emailB);
-
-  const rawSeqIdA = String(recA.seq_id || recA.seqId || recA.id_number || '').replace(/^SRC\s*/i, '').trim();
-  const rawSeqIdB = String(recB.seq_id || recB.seqId || recB.id_number || '').replace(/^SRC\s*/i, '').trim();
-  const sameSeqId = Boolean(rawSeqIdA && rawSeqIdB && rawSeqIdA === rawSeqIdB);
-
-  const uidA = String(recA.uid || recA.doc_id || '').trim();
-  const uidB = String(recB.uid || recB.doc_id || '').trim();
+  const uidA = String(recA.uid || recA.doc_id || recA.id || '').trim();
+  const uidB = String(recB.uid || recB.doc_id || recB.id || '').trim();
   if (uidA && uidB && uidA === uidB) {
     return { isMatch: false, confidence: 'none', matchLevel: 0, matchReason: 'Same Record', badgeText: '', score: 0 };
   }
 
-  // LEVEL 1 / 2: Exact Canonical Full Name Match or Same Tokens
-  if (cA.normalizedName === cB.normalizedName) {
+  // Supporting secondary identifiers
+  const contactA = getCanonicalContactInfo(recA);
+  const contactB = getCanonicalContactInfo(recB);
+
+  const sameEmail = Boolean(contactA.email && contactB.email && contactA.email === contactB.email);
+  const samePhone = Boolean(contactA.phone && contactB.phone && contactA.phone === contactB.phone);
+  const sameContact = sameEmail || samePhone;
+
+  const bdayA = getCanonicalBirthdate(recA);
+  const bdayB = getCanonicalBirthdate(recB);
+  const sameBirthdate = Boolean(bdayA && bdayB && bdayA === bdayB);
+
+  const rawSeqIdA = getCanonicalIdNumber(recA).replace(/^SRC\s*/i, '').trim();
+  const rawSeqIdB = getCanonicalIdNumber(recB).replace(/^SRC\s*/i, '').trim();
+  const sameSeqId = Boolean(rawSeqIdA && rawSeqIdB && rawSeqIdA === rawSeqIdB);
+
+  const hasSecondaryInfo = sameBirthdate || sameContact || sameSeqId;
+
+  // Name comparisons & Levenshtein / Token Fuzzy metrics
+  const normA = cA.normalizedName;
+  const normB = cB.normalizedName;
+  const noSpaceA = normA.replace(/\s+/g, '');
+  const noSpaceB = normB.replace(/\s+/g, '');
+
+  const isExactName = normA === normB;
+  const isNoSpacesNameMatch = noSpaceA === noSpaceB;
+
+  // Sorted token comparison (handles "LastName, FirstName" vs "FirstName LastName")
+  const isReversedName = cA.sortedTokens.length >= 2 && cB.sortedTokens.length >= 2 && cA.sortedTokens.join(' ') === cB.sortedTokens.join(' ');
+
+  // Token Overlap (Jaccard & Count)
+  const setB = new Set(cB.tokens);
+  const commonTokens = cA.tokens.filter(t => setB.has(t));
+  const tokenOverlapCount = commonTokens.length;
+  const minTokensLen = Math.min(cA.tokens.length, cB.tokens.length);
+
+  // Levenshtein distance
+  const dist = levenshteinDistance(normA, normB);
+  const maxLen = Math.max(normA.length, normB.length);
+  const levSim = maxLen > 0 ? 1 - dist / maxLen : 0;
+
+  // First / Last token checks
+  const firstA = cA.tokens[0] || '';
+  const lastA = cA.tokens[cA.tokens.length - 1] || '';
+  const firstB = cB.tokens[0] || '';
+  const lastB = cB.tokens[cB.tokens.length - 1] || '';
+
+  const sameFirstLast = cA.tokens.length >= 2 && cB.tokens.length >= 2 && firstA === firstB && lastA === lastB;
+
+  const firstDist = levenshteinDistance(firstA, firstB);
+  const lastDist = levenshteinDistance(lastA, lastB);
+  const fuzzyFirstLast = cA.tokens.length >= 2 && cB.tokens.length >= 2 && firstDist <= 1 && lastDist <= 1;
+
+  // Fuzzy Name Match flag
+  const hasFuzzyNameMatch =
+    isExactName ||
+    isNoSpacesNameMatch ||
+    isReversedName ||
+    sameFirstLast ||
+    fuzzyFirstLast ||
+    levSim >= 0.70 ||
+    (dist <= 4 && maxLen >= 6) ||
+    (tokenOverlapCount >= 2 && minTokensLen >= 2) ||
+    (tokenOverlapCount >= 1 && (firstDist <= 1 || lastDist <= 1));
+
+  // LEVEL 1 / 2: Exact Canonical Full Name or Space-Insensitive Match
+  if (isExactName || isNoSpacesNameMatch) {
     const sameFields =
       cA.rawFirstName.toLowerCase() === cB.rawFirstName.toLowerCase() &&
       cA.rawLastName.toLowerCase() === cB.rawLastName.toLowerCase() &&
       Boolean(cA.rawFirstName && cA.rawLastName);
 
-    const matchReason = sameEmail || sameSeqId
-      ? 'Exact Full Name & Account Match'
-      : sameFields
-        ? 'Exact Canonical Full Name Match'
-        : 'Same Name Tokens / Field Mismatch';
+    let secondaryDetail = '';
+    if (sameBirthdate && sameContact) secondaryDetail = ' (Same DOB & Contact)';
+    else if (sameBirthdate) secondaryDetail = ' (Same DOB)';
+    else if (samePhone) secondaryDetail = ' (Same Phone)';
+    else if (sameEmail) secondaryDetail = ' (Same Email)';
 
-    const badgeText = sameFields ? 'Exact Match' : 'Field Mismatch';
+    const matchReason = (sameEmail || sameSeqId || samePhone || sameBirthdate)
+      ? `Exact Full Name & Secondary Identifier Match${secondaryDetail}`
+      : sameFields
+      ? 'Exact Canonical Full Name Match'
+      : 'Same Name Tokens / Field Mismatch';
+
+    const badgeText = sameBirthdate ? 'Exact Name + DOB' : sameFields ? 'Exact Match' : 'Field Mismatch';
 
     return {
       isMatch: true,
-      confidence: sameEmail || sameSeqId ? 'high' : 'high',
+      confidence: 'high',
       matchLevel: sameFields ? 1 : 2,
       matchReason,
       badgeText,
@@ -302,90 +559,97 @@ export function compareNamesAndRecords(recA: UserLike, recB: UserLike): MatchRes
     };
   }
 
-  // LEVEL 3: Reversed Name Order (sorted tokens identical, length >= 2)
-  if (cA.sortedTokens.length >= 2 && cB.sortedTokens.length >= 2) {
-    if (cA.sortedTokens.join(' ') === cB.sortedTokens.join(' ')) {
-      return {
-        isMatch: true,
-        confidence: 'high',
-        matchLevel: 3,
-        matchReason: 'Reversed Name Order',
-        badgeText: 'Reversed Name',
-        score: 0.98,
-      };
-    }
+  // LEVEL 3: Reversed Name Order
+  if (isReversedName) {
+    const secondaryDetail = sameBirthdate ? ' (Same DOB)' : samePhone ? ' (Same Phone)' : sameEmail ? ' (Same Email)' : '';
+    return {
+      isMatch: true,
+      confidence: 'high',
+      matchLevel: 3,
+      matchReason: `Reversed Name Order${secondaryDetail}`,
+      badgeText: sameBirthdate ? 'Reversed Name + DOB' : 'Reversed Name',
+      score: 0.98,
+    };
   }
 
   // LEVEL 4: Middle Name / Initial Variation (First & Last match)
-  if (cA.tokens.length >= 2 && cB.tokens.length >= 2) {
-    const firstA = cA.tokens[0];
-    const lastA = cA.tokens[cA.tokens.length - 1];
-    const firstB = cB.tokens[0];
-    const lastB = cB.tokens[cB.tokens.length - 1];
+  if (sameFirstLast) {
+    const schoolA = String(recA.school_name || recA.schoolName || recA.school || '').toLowerCase().trim();
+    const schoolB = String(recB.school_name || recB.schoolName || recB.school || '').toLowerCase().trim();
+    const sameSchool = Boolean(schoolA && schoolB && schoolA === schoolB);
 
-    if (firstA === firstB && lastA === lastB) {
-      const sameSchool = Boolean(
-        recA.school_name &&
-        recB.school_name &&
-        String(recA.school_name).toLowerCase().trim() === String(recB.school_name).toLowerCase().trim()
-      );
+    const secondaryDetail = sameBirthdate ? ' & Same DOB' : samePhone ? ' & Same Phone' : sameEmail ? ' & Same Email' : sameSchool ? ' & Same School' : '';
 
-      return {
-        isMatch: true,
-        confidence: sameEmail || sameSeqId || sameSchool ? 'high' : 'medium',
-        matchLevel: 4,
-        matchReason: 'Middle Name / Initial Variation',
-        badgeText: 'Middle Name Variation',
-        score: 0.90,
-      };
-    }
+    return {
+      isMatch: true,
+      confidence: (sameEmail || sameSeqId || samePhone || sameBirthdate || sameSchool) ? 'high' : 'medium',
+      matchLevel: 4,
+      matchReason: `Middle Name / Initial Variation${secondaryDetail}`,
+      badgeText: sameBirthdate ? 'Middle Name + DOB' : 'Middle Name Variation',
+      score: 0.92,
+    };
   }
 
-  // LEVEL 5: Accent / Diacritic / Ñ-N Difference
-  const rawNormA = normalizeRawWithDiacritics(cA.displayName);
-  const rawNormB = normalizeRawWithDiacritics(cB.displayName);
-  if (rawNormA && rawNormB && rawNormA !== rawNormB && cA.normalizedName === cB.normalizedName) {
+  // LEVEL 5: Fuzzy Name Match + Secondary Identifier (Birthdate / Phone / Email / Shared ID)
+  if (hasFuzzyNameMatch && hasSecondaryInfo) {
+    let reason = 'Fuzzy Name Match';
+    let badge = 'Fuzzy Match';
+
+    if (sameBirthdate && (samePhone || sameEmail)) {
+      reason = 'Fuzzy Name Match with Same Birthdate & Contact Info';
+      badge = 'DOB + Contact + Name';
+    } else if (sameBirthdate) {
+      reason = 'Fuzzy Name Match with Same Birthdate';
+      badge = 'Same DOB + Name';
+    } else if (samePhone) {
+      reason = 'Fuzzy Name Match with Same Phone Number';
+      badge = 'Same Phone + Name';
+    } else if (sameEmail) {
+      reason = 'Fuzzy Name Match with Same Email Address';
+      badge = 'Same Email + Name';
+    } else if (sameSeqId) {
+      reason = 'Fuzzy Name Match with Shared ID Number';
+      badge = 'Shared ID + Name';
+    }
+
     return {
       isMatch: true,
       confidence: 'high',
       matchLevel: 5,
-      matchReason: 'Accent or Special Character Difference (Ñ/N)',
-      badgeText: 'Accent Variation',
-      score: 0.95,
+      matchReason: reason,
+      badgeText: badge,
+      score: Math.max(0.85, levSim),
     };
   }
 
-  // LEVEL 6: Levenshtein Fuzzy Token Match
-  if (cA.tokens.length >= 2 && cB.tokens.length >= 2) {
-    const dist = levenshteinDistance(cA.normalizedName, cB.normalizedName);
-    const maxLen = Math.max(cA.normalizedName.length, cB.normalizedName.length);
-    const similarity = 1 - dist / maxLen;
-
-    if (similarity >= 0.82 && dist <= 3) {
-      return {
-        isMatch: true,
-        confidence: similarity >= 0.90 ? 'medium' : 'low',
-        matchLevel: 6,
-        matchReason: 'Similar Name / Minor Typo',
-        badgeText: 'Possible Duplicate',
-        score: similarity,
-      };
-    }
-  }
-
-  // Same Email or Same ID with similar name
-  if (sameEmail || sameSeqId) {
-    const dist = levenshteinDistance(cA.normalizedName, cB.normalizedName);
-    if (dist <= 6) {
+  // LEVEL 6: High Secondary Match (Birthdate + Contact or Phone + Email) with moderate name similarity
+  if ((sameBirthdate && sameContact) || (samePhone && sameEmail) || (sameBirthdate && sameSeqId)) {
+    if (levSim >= 0.40 || tokenOverlapCount >= 1 || (cA.tokens.length === 1 && cB.tokens.length === 1)) {
       return {
         isMatch: true,
         confidence: 'high',
         matchLevel: 6,
-        matchReason: sameEmail ? 'Same Email / Matching Account' : 'Shared ID Number',
-        badgeText: 'High Confidence',
+        matchReason: sameBirthdate && sameContact
+          ? 'Matching Birthdate & Contact Info (Fuzzy Name)'
+          : samePhone && sameEmail
+          ? 'Matching Phone & Email Address (Fuzzy Name)'
+          : 'Matching Birthdate & ID Number (Fuzzy Name)',
+        badgeText: 'DOB & Contact Match',
         score: 0.88,
       };
     }
+  }
+
+  // LEVEL 7: Pure Fuzzy Name Match (Levenshtein / Token Overlap) without secondary info
+  if (levSim >= 0.80 || (dist <= 3 && maxLen >= 5) || (tokenOverlapCount >= 2 && minTokensLen >= 2)) {
+    return {
+      isMatch: true,
+      confidence: levSim >= 0.88 ? 'medium' : 'low',
+      matchLevel: 7,
+      matchReason: 'Similar Name / Minor Typo',
+      badgeText: 'Possible Duplicate',
+      score: levSim,
+    };
   }
 
   return { isMatch: false, confidence: 'none', matchLevel: 0, matchReason: '', badgeText: '', score: 0 };
@@ -406,9 +670,9 @@ export function analyzeDuplicatesReport(allRecords: UserLike[], filterYear?: str
   // 1. Group by ID Number
   const idGroupsMap: Record<string, UserLike[]> = {};
   records.forEach((rec) => {
-    const rawSeqId = String(rec.seq_id || rec.seqId || rec.id_number || '').trim();
+    const rawSeqId = getCanonicalIdNumber(rec);
     const numericalId = rawSeqId.replace(/^SRC\s*/i, '').trim();
-    if (numericalId) {
+    if (numericalId && numericalId.toUpperCase() !== 'N/A' && numericalId.toUpperCase() !== 'NONE' && numericalId !== '-') {
       if (!idGroupsMap[numericalId]) idGroupsMap[numericalId] = [];
       idGroupsMap[numericalId].push(rec);
     }
@@ -466,6 +730,9 @@ export function analyzeDuplicatesReport(allRecords: UserLike[], filterYear?: str
     const recWithMeta = {
       ...records[i],
       _canonical: getCanonicalFullName(records[i]),
+      _canonicalId: getCanonicalIdNumber(records[i]),
+      _canonicalBirthdate: getCanonicalBirthdate(records[i]),
+      _canonicalContact: getCanonicalContactInfo(records[i]),
       _matchReason: matchMeta?.reason || 'Exact Name Match',
       _badgeText: matchMeta?.badge || 'Exact Match',
     };
@@ -479,6 +746,9 @@ export function analyzeDuplicatesReport(allRecords: UserLike[], filterYear?: str
       g.map((r) => ({
         ...r,
         _canonical: getCanonicalFullName(r),
+        _canonicalId: getCanonicalIdNumber(r),
+        _canonicalBirthdate: getCanonicalBirthdate(r),
+        _canonicalContact: getCanonicalContactInfo(r),
       }))
     );
 

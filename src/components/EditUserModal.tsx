@@ -20,7 +20,9 @@ export const EditUserModal: React.FC<EditUserModalProps> = ({ user, isOpen, onCl
     lastName: user.lastName || user.last_name || '',
     email: user.email || '',
     role: user.role || user.role_name || 'Reviewee',
-    seqId: user.seqId || user.seq_id || user.id_number || '',
+    seqId: user.seqId || user.seq_id || user.id_number || user.idNumber || user.srcId || user.studentId || '',
+    schoolName: user.schoolName || user.school_name || user.school || '',
+    reviewBranch: user.reviewBranch || user.review_branch || user.branch || '',
   });
   const [isConfirming, setIsConfirming] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -48,6 +50,20 @@ export const EditUserModal: React.FC<EditUserModalProps> = ({ user, isOpen, onCl
       await onSave({
         ...user,
         ...formData,
+        seqId: formData.seqId.trim(),
+        seq_id: formData.seqId.trim(),
+        srcId: formData.seqId.trim(),
+        src_id: formData.seqId.trim(),
+        idNumber: formData.seqId.trim(),
+        id_number: formData.seqId.trim(),
+        studentId: formData.seqId.trim(),
+        student_id: formData.seqId.trim(),
+        schoolName: formData.schoolName.trim(),
+        school_name: formData.schoolName.trim(),
+        school: formData.schoolName.trim(),
+        reviewBranch: formData.reviewBranch.trim(),
+        review_branch: formData.reviewBranch.trim(),
+        branch: formData.reviewBranch.trim(),
         middleName: cleanedMiddle,
         middle_name: cleanedMiddle,
         middle_initial: cleanedMiddle ? `${cleanedMiddle.charAt(0).toUpperCase()}.` : '',
@@ -130,6 +146,14 @@ export const EditUserModal: React.FC<EditUserModalProps> = ({ user, isOpen, onCl
             <div>
               <label className="block text-xs font-bold text-slate-500 mb-1">ID Number</label>
               <input type="text" disabled={isEditingForbidden} value={formData.seqId} onChange={e => setFormData({...formData, seqId: e.target.value})} className="w-full p-2 border border-slate-200 rounded-lg text-sm disabled:bg-slate-100" />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-500 mb-1">School Name</label>
+              <input type="text" disabled={isEditingForbidden} value={formData.schoolName} onChange={e => setFormData({...formData, schoolName: e.target.value})} placeholder="e.g. Lanao School of Science and Technology, Inc." className="w-full p-2 border border-slate-200 rounded-lg text-sm disabled:bg-slate-100" />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-500 mb-1">Review Branch</label>
+              <input type="text" disabled={isEditingForbidden} value={formData.reviewBranch} onChange={e => setFormData({...formData, reviewBranch: e.target.value})} placeholder="e.g. Iligan City" className="w-full p-2 border border-slate-200 rounded-lg text-sm disabled:bg-slate-100" />
             </div>
           </div>
           <button type="button" disabled={isEditingForbidden} onClick={handleSubmit} className="w-full mt-6 bg-teal-600 text-white font-bold py-2.5 rounded-xl hover:bg-teal-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">

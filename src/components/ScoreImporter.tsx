@@ -20,7 +20,8 @@ import {
   Info,
   Check,
   Sliders,
-  Database
+  Database,
+  FileCheck
 } from 'lucide-react';
 import {
   processCsvRows,
@@ -31,8 +32,9 @@ import {
   MatchMethod
 } from '../lib/scoreMatcher';
 import { updateDoc, doc, serverTimestamp, collection, setDoc, writeBatch, getDocs } from 'firebase/firestore';
-import { getScoreFieldName, normalizeScoreCategory } from '../utils/scoreFieldResolver';
+import { getScoreFieldName, normalizeScoreCategory, normalizeScoreSubject, normalizeEvaluationDate } from '../utils/scoreFieldResolver';
 import { getCanonicalFullName, normalizeNameForComparison } from '../utils/nameNormalization';
+import { resolveCanonicalUserIdentity } from '../services/userIdentityResolver';
 import { firestoreDb } from '../utils/firebaseClient';
 import { AnimatedDatePicker } from './ui/animated-date-picker';
 
@@ -348,6 +350,24 @@ export const ScoreImporter: React.FC<ScoreImporterProps> = ({
   const [submitStage, setSubmitStage] = useState('');
   const [submitStatus, setSubmitStatus] = useState<'idle' | 'working' | 'success' | 'error'>('idle');
   const [submitMessage, setSubmitMessage] = useState('');
+  const [postImportReport, setPostImportReport] = useState<{
+    totalCsvRows: number;
+    attemptedRows: number;
+    successfulRows: number;
+    skippedExistingRows: number;
+    skippedLowerScoreRows: number;
+    failedRows: number;
+    outsideScopeRows: number;
+    items: Array<{
+      rowNum: number;
+      revieweeName: string;
+      officialIdNumber: string;
+      scoreText: string;
+      statusResult: string;
+      details: string;
+    }>;
+  } | null>(null);
+  const [reportFilterTab, setReportFilterTab] = useState<'ALL' | 'SUCCESS' | 'SKIPPED' | 'FAILED'>('ALL');
 
   // Dynamic Filtering / Search states for the preview list
   const [previewStatusFilter, setPreviewStatusFilter] = useState<PreviewStatusFilter>('ALL');
@@ -661,7 +681,7 @@ export const ScoreImporter: React.FC<ScoreImporterProps> = ({
           ...targetRow,
           matchedUser: user,
           matchedUserId: userDocId,
-          matchedUserName: `${user.first_name || user.firstName || ''} ${user.last_name || user.lastName || ''}`.trim() || user.email || 'User',
+          matchedUserName: resolveCanonicalUserIdentity(user).fullName,
           matchedRevieweeDocumentId: user.doc_id || user.id || userDocId || null,
           matchedRevieweeUid: user.uid || null,
           matchedRevieweeId: userDocId || user.id || null,
@@ -802,6 +822,29 @@ export const ScoreImporter: React.FC<ScoreImporterProps> = ({
     return filtered;
   }, [rowsState, previewStatusFilter, previewSearch]);
 
+  const handleConfirmNameMatch = (row: CsvParsedRow) => {
+    const user = row.matchedUser;
+    if (!user) return;
+    const docId = user.doc_id || user.documentId || user.id || user.uid;
+    const uidVal = user.uid || docId;
+    const idNum = user.idNumber || user.id_number || user.studentId || user.student_id || user.seqId || row.csvStudentId;
+
+    setRowsState(prev => prev.map(r => {
+      if (r.rowNum === row.rowNum) {
+        return {
+          ...r,
+          status: 'READY',
+          matchMethod: 'NAME_EXACT_UNIQUE',
+          matchedRevieweeDocumentId: docId,
+          matchedRevieweeUid: uidVal,
+          matchedOfficialIdNumber: idNum,
+          remarks: `Confirmed match to '${getCanonicalFullName(user).displayName}' (${idNum})`
+        };
+      }
+      return r;
+    }));
+  };
+
   // Commit Scores Handler
   const handleCommitScores = async () => {
     const validRows = rowsState.filter(r => r.status === 'READY' && r.matchedUser);
@@ -822,19 +865,21 @@ export const ScoreImporter: React.FC<ScoreImporterProps> = ({
     try {
       if (!firestoreDb) throw new Error("Firestore database is not initialized.");
 
+      const activeFolderId = scoreFolderId || "main";
+      const normCat = normalizeScoreCategory(selectedCategory);
+      const normSubj = normalizeScoreSubject(selectedSubject);
+      const normDate = normalizeEvaluationDate(selectedDate);
+
       // 1. Fetch existing score_events to find or create a column for this imported session
       const eventsSnap = await getDocs(collection(firestoreDb, 'score_events'));
       const events = eventsSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
 
-      const normCat = normalizeScoreCategory(selectedCategory);
-      const normSubj = selectedSubject.toLowerCase();
-      const normDate = selectedDate;
-
       let existingEvent = events.find(evt => {
+        const isSameFolder = (evt.scoreFolderId || "main") === activeFolderId;
         const isSameCat = normalizeScoreCategory(evt.category) === normCat;
-        const isSameSubj = String(evt.subjectId || evt.subjectName || evt.majorAreaId || '').toLowerCase().trim() === normSubj;
-        const isSameDate = evt.evaluationDate === normDate;
-        return isSameCat && isSameSubj && isSameDate;
+        const isSameSubj = normalizeScoreSubject(evt.subjectId || evt.subjectName || evt.majorAreaId || evt.majorAreaName || '') === normSubj;
+        const isSameDate = normalizeEvaluationDate(evt.evaluationDate || evt.date) === normDate;
+        return isSameFolder && isSameCat && isSameSubj && isSameDate;
       });
 
       let eventId = '';
@@ -851,13 +896,13 @@ export const ScoreImporter: React.FC<ScoreImporterProps> = ({
         const eventRef = doc(collection(firestoreDb, "score_events"));
         eventId = eventRef.id;
         await setDoc(eventRef, {
-          scoreFolderId: scoreFolderId || "main",
+          scoreFolderId: activeFolderId,
           category: selectedCategory,
-          majorAreaId: selectedSubject.toLowerCase(),
+          majorAreaId: normSubj,
           majorAreaName: selectedSubject,
-          subjectId: selectedSubject.toLowerCase(),
+          subjectId: normSubj,
           subjectName: selectedSubject,
-          evaluationDate: selectedDate,
+          evaluationDate: normDate,
           totalItems: totalItems,
           publicationStatus: "published",
           createdBy: currentUser?.uid || "admin",
@@ -866,120 +911,267 @@ export const ScoreImporter: React.FC<ScoreImporterProps> = ({
         });
       }
 
-      const subjectKey = selectedSubject.toLowerCase();
-      const categoryKey = selectedCategory.toLowerCase().replace(/\s+/g, '');
+      const categoryKey = normCat;
       let fieldName = '';
       if (categoryKey === 'preboard') {
-        fieldName = `preboard_${subjectKey}`;
+        fieldName = `preboard_${normSubj}`;
       } else if (categoryKey === 'pretest' || categoryKey === 'diagnostic') {
-        fieldName = `diag_${subjectKey}`;
+        fieldName = `diag_${normSubj}`;
       } else if (categoryKey === 'posttest' || categoryKey === 'post') {
-        fieldName = `post_${subjectKey}`;
+        fieldName = `post_${normSubj}`;
       } else {
-        fieldName = `score_${subjectKey}_${categoryKey}`;
+        fieldName = `score_${normSubj}_${categoryKey}`;
       }
 
+      let successfulRows = 0;
+      let skippedExistingRows = 0;
+      let skippedLowerScoreRows = 0;
+      let failedRows = 0;
+      let outsideScopeRows = 0;
+      const reportItems: Array<{
+        rowNum: number;
+        revieweeName: string;
+        officialIdNumber: string;
+        scoreText: string;
+        statusResult: string;
+        details: string;
+      }> = [];
+
+      const BATCH_SIZE = 400;
       let processedCount = 0;
-      const batchSize = 25;
 
-      for (let i = 0; i < validRows.length; i += batchSize) {
-        const chunk = validRows.slice(i, i + batchSize);
+      for (let chunkIdx = 0; chunkIdx < validRows.length; chunkIdx += BATCH_SIZE) {
+        const chunk = validRows.slice(chunkIdx, chunkIdx + BATCH_SIZE);
 
-        for (const row of chunk) {
+        const chunkPromises = chunk.map(async (row) => {
           const user = row.matchedUser;
-          const userDocId = user?.doc_id || user?.uid || row.matchedUserId;
+          const userDocId = row.matchedRevieweeDocumentId || user?.doc_id || user?.documentId || user?.id || user?.uid;
+          const userUid = row.matchedRevieweeUid || user?.uid || userDocId;
+          const officialId = row.matchedOfficialIdNumber || user?.idNumber || user?.id_number || user?.studentId || user?.student_id || row.csvStudentId || 'N/A';
+          const displayName = row.matchedUserName || (user ? getCanonicalFullName(user).displayName : row.csvFullName);
 
-          if (!userDocId || typeof userDocId !== 'string' || userDocId === 'unmatched' || !user) continue;
+          if (!userDocId || typeof userDocId !== 'string' || userDocId === 'unmatched' || !user) {
+            return {
+              type: 'FAILED',
+              item: {
+                rowNum: row.rowNum,
+                revieweeName: displayName,
+                officialIdNumber: officialId,
+                scoreText: `${row.earnedPoints}/${row.possiblePoints || totalItems}`,
+                statusResult: 'FAILED_USER_NOT_FOUND',
+                details: 'Canonical reviewee Firestore document ID not found.'
+              }
+            };
+          }
 
-          const score = Number(row.earnedPoints || 0);
+          const score = Number(row.earnedPoints !== null && row.earnedPoints !== undefined ? row.earnedPoints : 0);
           const possible = Number(row.possiblePoints || totalItems || 100);
 
-          const existingRecord = user.assessmentRecords?.[eventId];
-          const currentVal = existingRecord?.score !== undefined ? existingRecord.score : user[fieldName];
+          // Stable score identity key: revieweeDocId__folderId__categoryId__areaId__subjectId__date__eventId
+          const scoreRecordKey = `${userDocId}__${activeFolderId}__${normCat}__${normSubj}__${normSubj}__${normDate}__${eventId}`;
+          const existingRecord = user.assessmentRecords?.[eventId] || user.scoresByDate?.[scoreRecordKey];
+          const currentVal = existingRecord?.earnedPoints ?? existingRecord?.score ?? (user[fieldName] !== undefined && user[fieldName] !== null && user[fieldName] !== '' ? Number(user[fieldName]) : undefined);
 
           if (currentVal !== undefined && currentVal !== null) {
             if (existingScorePolicy === 'skip') {
-              continue;
+              return {
+                type: 'SKIPPED_EXISTING',
+                item: {
+                  rowNum: row.rowNum,
+                  revieweeName: displayName,
+                  officialIdNumber: officialId,
+                  scoreText: `${score}/${possible}`,
+                  statusResult: 'SKIPPED_EXISTING',
+                  details: `Existing score (${currentVal}) preserved due to policy.`
+                }
+              };
             } else if (existingScorePolicy === 'keep_highest') {
               if (typeof currentVal === 'number' && score <= currentVal) {
-                continue;
+                return {
+                  type: 'SKIPPED_LOWER',
+                  item: {
+                    rowNum: row.rowNum,
+                    revieweeName: displayName,
+                    officialIdNumber: officialId,
+                    scoreText: `${score}/${possible}`,
+                    statusResult: 'SKIPPED_LOWER_SCORE',
+                    details: `Imported score (${score}) is not higher than existing score (${currentVal}).`
+                  }
+                };
               }
             }
           }
 
-          const normalizedCategoryKey = normalizeScoreCategory(selectedCategory);
-          const scoreRecordKey = `${userDocId}_${normalizedCategoryKey}_${selectedDate}`;
-
-          const updatePayload: any = {
-            ...(row.updateData || {}),
-            [fieldName]: score,
-            [`${fieldName}_total`]: possible,
-            [`scoresByDate.${scoreRecordKey}`]: {
+          try {
+            // 1. Create canonical score record in 'scores' collection
+            const canonicalRef = doc(firestoreDb, "scores", scoreRecordKey);
+            await setDoc(canonicalRef, {
+              scoreId: scoreRecordKey,
+              revieweeDocumentId: userDocId,
+              revieweeUid: userUid,
+              officialIdNumber: officialId,
+              scoreFolderId: activeFolderId,
               scoreEventId: eventId,
-              category: selectedCategory,
-              categoryKey: normalizedCategoryKey,
-              score: score,
-              rawScore: score,
-              earnedPoints: score,
-              possiblePoints: possible,
+              categoryId: normCat,
+              categoryName: selectedCategory,
+              majorAreaId: normSubj,
+              majorAreaName: selectedSubject,
+              subjectId: normSubj,
+              subjectName: selectedSubject,
+              evaluationDate: normDate,
+              earnedScore: score,
+              totalItems: possible,
               percentage: (score / possible) * 100,
-              date: selectedDate,
-              scoreFolderId: scoreFolderId || "main",
-              source: 'score_import',
-              remarks: 'Imported via CSV',
-              updatedAt: new Date().toISOString()
-            },
-            [`assessmentRecords.${eventId}`]: {
-              scoreEventId: eventId,
-              category: selectedCategory,
-              date: selectedDate,
-              score: score,
-              totalScore: possible,
-              subject: selectedSubject,
-              subjectCode: selectedSubject.toLowerCase(),
-              scoreFolderId: scoreFolderId || "main",
               publicationStatus: "published",
-              updatedAt: new Date().toISOString()
-            },
-            last_score_update: serverTimestamp(),
-            updated_at: new Date().toISOString()
-          };
+              source: "csv_import",
+              createdAt: new Date().toISOString(),
+              createdBy: currentUser?.uid || "system",
+              updatedAt: new Date().toISOString(),
+              updatedBy: currentUser?.uid || "system"
+            }, { merge: true });
 
-          const userRef = doc(firestoreDb, 'users', userDocId);
-          await updateDoc(userRef, updatePayload);
+            // 2. Update compatibility fields on 'users/{userDocId}'
+            const userRef = doc(firestoreDb, 'users', userDocId);
+            const updatePayload: any = {
+              ...(row.updateData || {}),
+              [fieldName]: score,
+              [`${fieldName}_total`]: possible,
+              [`scoresByDate.${scoreRecordKey}`]: {
+                scoreId: scoreRecordKey,
+                scoreEventId: eventId,
+                category: selectedCategory,
+                categoryKey: normCat,
+                majorAreaId: normSubj,
+                subjectId: normSubj,
+                subject: selectedSubject,
+                score: score,
+                rawScore: score,
+                earnedPoints: score,
+                possiblePoints: possible,
+                percentage: (score / possible) * 100,
+                date: normDate,
+                evaluationDate: normDate,
+                scoreFolderId: activeFolderId,
+                source: 'score_import',
+                remarks: 'Imported via CSV',
+                updatedAt: new Date().toISOString()
+              },
+              [`assessmentRecords.${eventId}`]: {
+                scoreEventId: eventId,
+                category: selectedCategory,
+                date: normDate,
+                score: score,
+                totalScore: possible,
+                subject: selectedSubject,
+                subjectCode: normSubj,
+                scoreFolderId: activeFolderId,
+                publicationStatus: "published",
+                updatedAt: new Date().toISOString()
+              },
+              last_score_update: serverTimestamp(),
+              updated_at: new Date().toISOString()
+            };
 
-          // Record in activity log
-          const logRef = doc(collection(firestoreDb, 'activity_logs'));
-          await setDoc(logRef, {
-            user_id: userDocId,
-            user_name: row.matchedUserName,
-            action: 'SCORE_IMPORT',
-            details: `Imported ${selectedSubject} (${selectedCategory}): ${row.earnedPoints}/${row.possiblePoints} (${row.percentage}%)`,
-            performed_by: currentUser?.email || 'Admin',
-            timestamp: serverTimestamp(),
-            created_at: new Date().toISOString()
-          });
+            await updateDoc(userRef, updatePayload);
+
+            // 3. Activity log
+            const logRef = doc(collection(firestoreDb, 'activity_logs'));
+            await setDoc(logRef, {
+              user_id: userDocId,
+              user_name: displayName,
+              action: 'SCORE_IMPORT',
+              details: `Imported ${selectedSubject} (${selectedCategory}): ${score}/${possible}`,
+              performed_by: currentUser?.email || 'Admin',
+              timestamp: serverTimestamp(),
+              created_at: new Date().toISOString()
+            });
+
+            return {
+              type: 'SUCCESS',
+              item: {
+                rowNum: row.rowNum,
+                revieweeName: displayName,
+                officialIdNumber: officialId,
+                scoreText: `${score}/${possible}`,
+                statusResult: 'SUCCESS',
+                details: 'Saved & verified in database.'
+              }
+            };
+          } catch (rowErr: any) {
+            console.error(`Error importing row #${row.rowNum} for ${displayName}:`, rowErr);
+            return {
+              type: 'FAILED',
+              item: {
+                rowNum: row.rowNum,
+                revieweeName: displayName,
+                officialIdNumber: officialId,
+                scoreText: `${score}/${possible}`,
+                statusResult: rowErr?.code === 'permission-denied' ? 'FAILED_PERMISSION' : 'FAILED_WRITE',
+                details: rowErr.message || 'Write operation failed.'
+              }
+            };
+          }
+        });
+
+        const batchResults = await Promise.allSettled(chunkPromises);
+
+        for (const res of batchResults) {
+          if (res.status === 'fulfilled' && res.value) {
+            const val = res.value;
+            reportItems.push(val.item);
+            if (val.type === 'SUCCESS') successfulRows++;
+            else if (val.type === 'SKIPPED_EXISTING') skippedExistingRows++;
+            else if (val.type === 'SKIPPED_LOWER') skippedLowerScoreRows++;
+            else if (val.type === 'FAILED') failedRows++;
+          } else if (res.status === 'rejected') {
+            failedRows++;
+            reportItems.push({
+              rowNum: 0,
+              revieweeName: 'Unknown',
+              officialIdNumber: 'N/A',
+              scoreText: 'N/A',
+              statusResult: 'FAILED_UNHANDLED',
+              details: String(res.reason || 'Unexpected error in batch execution')
+            });
+          }
         }
 
         processedCount += chunk.length;
         const pct = Math.min(95, Math.round((processedCount / validRows.length) * 90) + 5);
         setSubmitProgress(pct);
-        setSubmitMessage(`Updated ${processedCount} of ${validRows.length} records...`);
-        updateBackgroundTask(taskId, { progress: pct, message: `Updated ${processedCount}/${validRows.length}` });
+        setSubmitMessage(`Processed ${processedCount} of ${validRows.length} records (${successfulRows} written)...`);
+        updateBackgroundTask(taskId, { progress: pct, message: `Updated ${successfulRows}/${validRows.length}` });
       }
 
       setSubmitProgress(100);
-      setSubmitStatus('success');
+      setSubmitStatus(failedRows === 0 ? 'success' : successfulRows > 0 ? 'working' : 'error');
       setSubmitStage('Import Complete');
-      setSubmitMessage(`Successfully imported ${validRows.length} scores for ${selectedSubject}!`);
-      updateBackgroundTask(taskId, { progress: 100, status: 'completed', message: 'Import successful' });
+      
+      const skippedTotal = skippedExistingRows + skippedLowerScoreRows;
+      const statusMessage = `Successfully uploaded ${successfulRows} of ${validRows.length} ready scores.` + 
+        (skippedTotal > 0 ? ` (${skippedTotal} skipped)` : '') +
+        (failedRows > 0 ? ` (${failedRows} failed)` : '');
+      setSubmitMessage(statusMessage);
+      updateBackgroundTask(taskId, { progress: 100, status: failedRows === 0 ? 'completed' : 'failed', message: statusMessage });
 
-      // Save activation record
+      const reportObj = {
+        totalCsvRows: rowsState.length,
+        attemptedRows: validRows.length,
+        successfulRows,
+        skippedExistingRows,
+        skippedLowerScoreRows,
+        failedRows,
+        outsideScopeRows,
+        items: reportItems
+      };
+      setPostImportReport(reportObj);
+
+      // Save activation record & import history
       try {
         const importId = "import_" + Date.now();
         const schoolId = String(currentUser?.school_name || "ckcm").toLowerCase().trim() || "default";
-        const catNormalized = selectedCategory.toLowerCase().replace(/\s+/g, '');
-        const subjNormalized = selectedSubject.toLowerCase();
+        const catNormalized = normCat;
+        const subjNormalized = normSubj;
         
         // Save to score_area_settings flat collection
         const flatDocId = `${schoolId}_${catNormalized}_${subjNormalized}`;
@@ -995,33 +1187,26 @@ export const ScoreImporter: React.FC<ScoreImporterProps> = ({
           latestImportAt: serverTimestamp()
         }, { merge: true });
 
-        // Save to schools/{schoolId}/score_area_settings/{category_subject}
-        const scopedRef = doc(firestoreDb, "schools", schoolId, "score_area_settings", `${catNormalized}_${subjNormalized}`);
-        await setDoc(scopedRef, {
-          schoolId,
-          category: catNormalized,
-          subject: subjNormalized,
-          activated: true,
-          activatedAt: serverTimestamp(),
-          activatedByUid: currentUser?.uid || "system",
-          latestImportId: importId,
-          latestImportAt: serverTimestamp()
-        }, { merge: true });
-
-        // Save to score_import_history to satisfy rule #2
+        // Save to score_import_history
         const historyRef = doc(firestoreDb, "score_import_history", importId);
         await setDoc(historyRef, {
           importId,
           schoolId,
+          scoreFolderId: activeFolderId,
           category: catNormalized,
           subject: subjNormalized,
-          status: "SUCCESS",
+          status: failedRows === 0 ? "SUCCESS" : successfulRows > 0 ? "PARTIAL_SUCCESS" : "FAILED",
           importedAt: serverTimestamp(),
           importedByUid: currentUser?.uid || "system",
-          recordsCount: validRows.length
+          totalCsvRows: rowsState.length,
+          readyRows: validRows.length,
+          successfulRows,
+          skippedExistingRows,
+          skippedLowerScoreRows,
+          failedRows,
+          outsideScopeRows
         });
 
-        console.log("Score area activated successfully:", flatDocId);
       } catch (actErr) {
         console.error("Error saving score activation record:", actErr);
       }
@@ -1047,6 +1232,7 @@ export const ScoreImporter: React.FC<ScoreImporterProps> = ({
     setRowsState([]);
     setHeaderError(null);
     setSubmitStatus('idle');
+    setPostImportReport(null);
   };
 
   return (
@@ -1551,22 +1737,157 @@ export const ScoreImporter: React.FC<ScoreImporterProps> = ({
                             </div>
                           </td>
                           <td className="p-3 text-right">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setManualMatchRowIdx(row.rowNum);
-                                setManualUserSearch(row.csvLast || row.csvFullName || '');
-                              }}
-                              className="px-2.5 py-1 text-[11px] font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition-colors cursor-pointer"
-                            >
-                              {row.matchedUser ? 'Change Match' : 'Manual Match'}
-                            </button>
+                            <div className="flex items-center justify-end gap-1.5">
+                              {row.status === 'ID_NOT_FOUND_NAME_MATCH' && row.matchedUser && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleConfirmNameMatch(row)}
+                                  className="px-2.5 py-1 text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors cursor-pointer inline-flex items-center gap-1 shadow-sm"
+                                >
+                                  <Check size={12} /> Confirm Match
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setManualMatchRowIdx(row.rowNum);
+                                  setManualUserSearch(row.csvLast || row.csvFullName || '');
+                                }}
+                                className="px-2.5 py-1 text-[11px] font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition-colors cursor-pointer"
+                              >
+                                {row.matchedUser ? 'Change Match' : 'Manual Match'}
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       ))
                     )}
                   </tbody>
                 </table>
+              </div>
+            )}
+
+            {/* Post-Import Execution Verification Report */}
+            {postImportReport && (
+              <div className="mt-6 border border-slate-200 rounded-2xl p-5 bg-white shadow-sm space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
+                  <div>
+                    <h3 className="text-sm font-black text-slate-900 uppercase tracking-wider flex items-center gap-2">
+                      <FileCheck size={16} className="text-emerald-600" /> Post-Import Verification Report
+                    </h3>
+                    <p className="text-xs text-slate-500 font-medium">
+                      Exact row-by-row write results for {selectedSubject} ({selectedCategory}) on {selectedDate}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 px-3 py-1 rounded-xl">
+                      Written: {postImportReport.successfulRows}
+                    </span>
+                    {(postImportReport.skippedExistingRows + postImportReport.skippedLowerScoreRows) > 0 && (
+                      <span className="text-xs font-bold bg-blue-50 text-blue-700 border border-blue-200 px-3 py-1 rounded-xl">
+                        Skipped: {postImportReport.skippedExistingRows + postImportReport.skippedLowerScoreRows}
+                      </span>
+                    )}
+                    {postImportReport.failedRows > 0 && (
+                      <span className="text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200 px-3 py-1 rounded-xl">
+                        Failed: {postImportReport.failedRows}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Filter tabs for report */}
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setReportFilterTab('ALL')}
+                    className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                      reportFilterTab === 'ALL' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    All ({postImportReport.items.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setReportFilterTab('SUCCESS')}
+                    className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                      reportFilterTab === 'SUCCESS' ? 'bg-emerald-600 text-white' : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                    }`}
+                  >
+                    Success ({postImportReport.successfulRows})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setReportFilterTab('SKIPPED')}
+                    className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                      reportFilterTab === 'SKIPPED' ? 'bg-blue-600 text-white' : 'bg-blue-50 text-blue-700 hover:bg-blue-100'
+                    }`}
+                  >
+                    Skipped ({postImportReport.skippedExistingRows + postImportReport.skippedLowerScoreRows})
+                  </button>
+                  {postImportReport.failedRows > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setReportFilterTab('FAILED')}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                        reportFilterTab === 'FAILED' ? 'bg-rose-600 text-white' : 'bg-rose-50 text-rose-700 hover:bg-rose-100'
+                      }`}
+                    >
+                      Failed ({postImportReport.failedRows})
+                    </button>
+                  )}
+                </div>
+
+                {/* Report Table */}
+                <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-slate-50 font-black text-slate-600 uppercase text-[10px]">
+                      <tr>
+                        <th className="p-2.5">Row</th>
+                        <th className="p-2.5">Reviewee Name</th>
+                        <th className="p-2.5">ID Number</th>
+                        <th className="p-2.5">Score</th>
+                        <th className="p-2.5">Status</th>
+                        <th className="p-2.5">Details</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
+                      {postImportReport.items
+                        .filter(item => {
+                          if (reportFilterTab === 'SUCCESS') return item.statusResult === 'SUCCESS';
+                          if (reportFilterTab === 'SKIPPED') return item.statusResult.startsWith('SKIPPED');
+                          if (reportFilterTab === 'FAILED') return item.statusResult.startsWith('FAILED');
+                          return true;
+                        })
+                        .map((item, idx) => (
+                          <tr key={idx} className="hover:bg-slate-50/80">
+                            <td className="p-2.5 font-mono font-bold text-slate-400">{item.rowNum}</td>
+                            <td className="p-2.5 font-bold text-slate-900">{item.revieweeName}</td>
+                            <td className="p-2.5 font-mono">{item.officialIdNumber}</td>
+                            <td className="p-2.5 font-bold">{item.scoreText}</td>
+                            <td className="p-2.5">
+                              {item.statusResult === 'SUCCESS' && (
+                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                  SUCCESS
+                                </span>
+                              )}
+                              {item.statusResult.startsWith('SKIPPED') && (
+                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-200">
+                                  SKIPPED
+                                </span>
+                              )}
+                              {item.statusResult.startsWith('FAILED') && (
+                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-200">
+                                  FAILED
+                                </span>
+                              )}
+                            </td>
+                            <td className="p-2.5 text-slate-500 text-[11px]">{item.details}</td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
           </div>

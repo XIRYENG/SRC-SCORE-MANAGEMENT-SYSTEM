@@ -6,8 +6,10 @@ export type MatchMethod =
   | 'NONE';
 
 import { getCanonicalFullName } from '../utils/nameNormalization';
+import { resolveCanonicalUserIdentity } from '../services/userIdentityResolver';
 import { ScoreFolder } from '../types';
 import { isRevieweeInFolderScope } from '../utils/folderScope';
+import { normalizeScoreCategory, normalizeScoreSubject, normalizeEvaluationDate } from '../utils/scoreFieldResolver';
 
 export type RowStatus =
   | 'READY'
@@ -41,12 +43,14 @@ export interface CsvParsedRow {
   matchedUserName: string | null;
   matchedRevieweeDocumentId?: string | null;
   matchedRevieweeUid?: string | null;
+  matchedOfficialIdNumber?: string | null;
   matchedRevieweeId?: string | null;
   matchMethod: MatchMethod;
   status: RowStatus;
   remarks: string;
   possibleMatches: any[];
   updateData?: any;
+  scoreRecordKey?: string;
 }
 
 export interface ProcessCsvResult {
@@ -480,13 +484,19 @@ export function processCsvRows(
     let possibleMatchesList: any[] = [];
 
     // --- SCORE VALIDATION ---
+    const isEarnedBlank = rawEarnedPoints === null || rawEarnedPoints === undefined || String(rawEarnedPoints).trim() === '';
     const isScoreInvalid = 
+      isEarnedBlank ||
       earnedPoints === null || 
       isNaN(earnedPoints) || 
       earnedPoints < 0 || 
       (possiblePoints !== null && (possiblePoints <= 0 || earnedPoints > possiblePoints));
 
-    if (isScoreInvalid) {
+    if (isEarnedBlank) {
+      status = 'INVALID_SCORE';
+      remarks = `Blank earned score in CSV. Score entries cannot be empty.`;
+      invalidScoreCount++;
+    } else if (isScoreInvalid) {
       status = 'INVALID_SCORE';
       remarks = `Invalid score: Earned=${rawEarnedPoints || 'blank'}, Possible=${rawPossiblePoints || 'blank'}`;
       invalidScoreCount++;
@@ -505,7 +515,8 @@ export function processCsvRows(
           const m2 = revieweesByIdMap.get(ckcmId) || [];
           const combinedMap = new Map<string, any>();
           for (const u of [...m1, ...m2]) {
-            combinedMap.set(u.doc_id || u.uid, u);
+            const uDocId = u.doc_id || u.documentId || u.id || u.uid;
+            combinedMap.set(uDocId, u);
           }
           candidatesForId = Array.from(combinedMap.values());
         }
@@ -574,14 +585,40 @@ export function processCsvRows(
     }).slice(0, 5);
 
     // --- CHECK EXISTING SCORES ---
-    if ((status === 'READY' || status === 'ID_NOT_FOUND_NAME_MATCH') && matchedUser) {
-      const scoreRecordKey = `${matchedUser.doc_id || 'unmatched'}_${normalizedCategoryKey}_${normalizedDateKey}`;
-      const existingInFlat = matchedUser[scoreField] !== undefined && matchedUser[scoreField] !== null && String(matchedUser[scoreField]).trim() !== '';
-      const existingByDate = matchedUser.scoresByDate && matchedUser.scoresByDate[scoreRecordKey];
+    const activeFolderId = scoreFolder?.id || "main";
+    const normSubjKey = normalizeScoreSubject(selectedSubject);
+    const normCatKey = normalizeScoreCategory(selectedCategory);
+    const normDateStr = normalizeEvaluationDate(selectedDate);
+    let scoreRecordKey = '';
 
-      if (existingInFlat || existingByDate) {
+    if (matchedUser) {
+      const userDocId = matchedUser.doc_id || matchedUser.documentId || matchedUser.id || matchedUser.uid;
+      scoreRecordKey = [userDocId, activeFolderId, normCatKey, normSubjKey, normSubjKey, normDateStr].filter(Boolean).join("__");
+    }
+
+    if ((status === 'READY' || status === 'ID_NOT_FOUND_NAME_MATCH') && matchedUser) {
+      let existingInScoresByDate = false;
+      if (matchedUser.scoresByDate && typeof matchedUser.scoresByDate === 'object') {
+        if (matchedUser.scoresByDate[scoreRecordKey]) {
+          existingInScoresByDate = true;
+        } else {
+          existingInScoresByDate = Object.values(matchedUser.scoresByDate).some((entry: any) => {
+            if (!entry || typeof entry !== 'object') return false;
+            const entryFolder = entry.scoreFolderId || entry.folderId || "main";
+            if (entryFolder !== activeFolderId) return false;
+            const entryCat = normalizeScoreCategory(entry.categoryKey || entry.category || '');
+            if (entryCat !== normCatKey) return false;
+            const entrySubj = normalizeScoreSubject(entry.subjectId || entry.subject || entry.majorAreaId || '');
+            if (entrySubj !== normSubjKey) return false;
+            const entryDate = normalizeEvaluationDate(entry.date || entry.evaluationDate);
+            return entryDate === normDateStr;
+          });
+        }
+      }
+
+      if (existingInScoresByDate) {
         status = 'EXISTING_SCORE';
-        remarks = `Score already exists for this reviewee (${matchedUser[scoreField] || existingByDate?.score}).`;
+        remarks = `Score already exists for this reviewee (${selectedSubject} - ${selectedCategory} on ${normDateStr}).`;
         existingScoreCount++;
       }
     }
@@ -594,7 +631,7 @@ export function processCsvRows(
         existingScoreCount--;
       }
       status = 'OUTSIDE_FOLDER_SCOPE';
-      remarks = `Reviewee found (${getCanonicalFullName(matchedUser).displayName}) but is not included in this folder's selected school or branch scope.`;
+      remarks = `Reviewee found (${resolveCanonicalUserIdentity(matchedUser).fullName}) but is not included in this folder's selected school or branch scope.`;
       outsideFolderScopeCount++;
     }
 
@@ -603,43 +640,47 @@ export function processCsvRows(
     }
 
     let updateData: any = null;
-    if (earnedPoints !== null) {
-      const scoreValue = String(earnedPoints);
+    if (earnedPoints !== null && matchedUser) {
+      const userDocId = matchedUser.doc_id || matchedUser.documentId || matchedUser.id || matchedUser.uid;
+      const scoreValue = Number(earnedPoints);
+      
       updateData = {
-        [scoreField]: scoreValue,
+        [scoreField]: String(earnedPoints),
         category: categoryMatch,
         subject: fieldMatch
       };
 
-      updateData[`date_${fieldMatch.toLowerCase()}_${normalizedCategoryKey}`] = selectedDate;
+      updateData[`date_${fieldMatch.toLowerCase()}_${normCatKey}`] = normDateStr;
 
-      if (normalizedCategoryKey === 'pretest' || normalizedCategoryKey === 'diagnostic') {
-        updateData[`date_${fieldMatch.toLowerCase()}_diag`] = selectedDate;
-        updateData[`date_${fieldMatch.toLowerCase()}_pretest`] = selectedDate;
-      } else if (normalizedCategoryKey === 'preboard') {
-        updateData[`date_${fieldMatch.toLowerCase()}_preboard`] = selectedDate;
-      } else if (normalizedCategoryKey === 'posttest' || normalizedCategoryKey === 'post') {
-        updateData[`date_${fieldMatch.toLowerCase()}_posttest`] = selectedDate;
-        updateData[`date_${fieldMatch.toLowerCase()}_post`] = selectedDate;
+      if (normCatKey === 'pretest' || normCatKey === 'diagnostic') {
+        updateData[`date_${fieldMatch.toLowerCase()}_diag`] = normDateStr;
+        updateData[`date_${fieldMatch.toLowerCase()}_pretest`] = normDateStr;
+      } else if (normCatKey === 'preboard') {
+        updateData[`date_${fieldMatch.toLowerCase()}_preboard`] = normDateStr;
+      } else if (normCatKey === 'posttest' || normCatKey === 'post') {
+        updateData[`date_${fieldMatch.toLowerCase()}_posttest`] = normDateStr;
+        updateData[`date_${fieldMatch.toLowerCase()}_post`] = normDateStr;
       }
 
-      const userDocId = matchedUser?.doc_id || 'unmatched';
-      const scoreRecordKey = `${userDocId}_${normalizedCategoryKey}_${normalizedDateKey}`;
-
       updateData[`scoresByDate.${scoreRecordKey}`] = {
-        category: categoryMatch,
-        categoryKey: normalizedCategoryKey,
-        score: Number(scoreValue),
-        rawScore: Number(scoreValue),
-        earnedPoints: Number(scoreValue),
+        category: selectedCategory,
+        categoryKey: normCatKey,
+        majorAreaId: normSubjKey,
+        subjectId: normSubjKey,
+        subject: selectedSubject,
+        score: scoreValue,
+        rawScore: scoreValue,
+        earnedPoints: scoreValue,
         possiblePoints: Number(possiblePoints),
-        percentage: percentage !== null ? percentage : Number(scoreValue),
-        date: normalizedDateKey,
-        source: 'uploaded',
-        remarks: 'Uploaded via CSV',
+        percentage: percentage !== null ? percentage : (scoreValue / Number(possiblePoints)) * 100,
+        date: normDateStr,
+        evaluationDate: normDateStr,
+        scoreFolderId: activeFolderId,
+        source: 'score_import',
+        remarks: 'Imported via CSV',
         updatedAt: new Date().toISOString()
       };
-      updateData[`latestScores.${normalizedCategoryKey}`] = updateData[`scoresByDate.${scoreRecordKey}`];
+      updateData[`latestScores.${normCatKey}`] = updateData[`scoresByDate.${scoreRecordKey}`];
       updateData['latestScoreUploadAt'] = new Date().toISOString();
 
       for (let i = 1; i <= 100; i++) {
@@ -654,6 +695,10 @@ export function processCsvRows(
       }
     }
 
+    const matchedDocId = matchedUser ? (matchedUser.doc_id || matchedUser.documentId || matchedUser.id || matchedUser.uid) : null;
+    const matchedUidVal = matchedUser ? (matchedUser.uid || matchedUser.doc_id || matchedUser.documentId) : null;
+    const matchedOfficialId = matchedUser ? (matchedUser.idNumber || matchedUser.id_number || matchedUser.studentId || matchedUser.student_id || matchedUser.seqId || matchedUser.seq_id || normId) : null;
+
     processedRows.push({
       rowNum,
       csvFirst,
@@ -666,13 +711,17 @@ export function processCsvRows(
       rawEarnedPoints,
       rawPossiblePoints,
       matchedUser,
-      matchedUserId: matchedUser?.doc_id || null,
-      matchedUserName: matchedUser ? `${matchedUser.last_name || ''}, ${matchedUser.first_name || ''}`.trim() : null,
+      matchedUserId: matchedDocId,
+      matchedUserName: matchedUser ? resolveCanonicalUserIdentity(matchedUser).fullName : null,
+      matchedRevieweeDocumentId: matchedDocId,
+      matchedRevieweeUid: matchedUidVal,
+      matchedOfficialIdNumber: matchedOfficialId,
       matchMethod,
       status,
       remarks,
       possibleMatches: possibleMatchesList,
-      updateData
+      updateData,
+      scoreRecordKey
     });
   }
 

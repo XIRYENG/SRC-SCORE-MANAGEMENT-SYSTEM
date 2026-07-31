@@ -46,6 +46,8 @@ import { StatCard, ActivityFeed, QuickActionsGrid, SimpleTable, SectionHeader } 
 import { aggregateAreaScores } from '../utils/aggregateAreaScores';
 import { ProfileDashboard } from './ProfileDashboard';
 import { AllUsersDirectory } from './AllUsersDirectory';
+import { EditUserModal } from './EditUserModal';
+import { clientUpdateUser } from '../utils/firebaseClient';
 import { SyncModal } from './SyncModal';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { DEFAULT_GRADE_WEIGHTS, GradeWeights, SubjectArea, GRADE_CATEGORY_LABELS, GradeCategoryKey } from '../utils/gradeCalculation';
@@ -90,6 +92,7 @@ export function StaffPortal({ data, onLogout, onOpenSyncModal, syncProps }: Staf
   const { notifications } = useNotifications(db!, data.uid);
   const { allUsers, loading } = useFirestoreUsers();
   const [userData, setUserData] = useState(data);
+  const [editingUser, setEditingUser] = useState<any | null>(null);
   const [activeTab, setActiveTab] = useState(() => {
     const normalizedPath = decodeURIComponent(window.location.pathname).toLowerCase();
     if (normalizedPath.includes('/staff/allusers') || normalizedPath.includes('/users')) {
@@ -125,10 +128,23 @@ export function StaffPortal({ data, onLogout, onOpenSyncModal, syncProps }: Staf
   const staffMenuItems = useMemo(() => STAFF_MENU_ITEMS, []);
 
   const fullName = `${data.first_name || ''} ${data.middle_name ? data.middle_name + ' ' : ''}${data.last_name || ''}`.trim() || 'Staff Member';
-  const { folders: allScoreFolders } = useScoreFolders();
+  const { folders: rawScoreFolders } = useScoreFolders();
+  const allScoreFolders = useMemo(() => {
+    return rawScoreFolders.filter(f => f.publicationStatus !== 'hidden');
+  }, [rawScoreFolders]);
   const [dashboardFolderId, setDashboardFolderId] = useState<string>(() => {
     return localStorage.getItem('staff_dashboard_folder_id') || 'all';
   });
+
+  // Validate dashboardFolderId against available folders
+  useEffect(() => {
+    if (dashboardFolderId !== 'all' && allScoreFolders.length > 0) {
+      const exists = allScoreFolders.some(f => f.id === dashboardFolderId);
+      if (!exists) {
+        setDashboardFolderId('all');
+      }
+    }
+  }, [dashboardFolderId, allScoreFolders]);
   const [dashboardMode, setDashboardMode] = useState<'single' | 'combined'>(() => {
     return (localStorage.getItem('staff_dashboard_mode') as 'single' | 'combined') || 'single';
   });
@@ -136,6 +152,16 @@ export function StaffPortal({ data, onLogout, onOpenSyncModal, syncProps }: Staf
     const saved = localStorage.getItem('staff_selected_folder_ids');
     return saved ? JSON.parse(saved) : [];
   });
+
+  // Validate selectedFolderIds
+  useEffect(() => {
+    if (selectedFolderIds.length > 0 && allScoreFolders.length > 0) {
+      const validIds = selectedFolderIds.filter(id => allScoreFolders.some(f => f.id === id));
+      if (validIds.length !== selectedFolderIds.length) {
+        setSelectedFolderIds(validIds);
+      }
+    }
+  }, [selectedFolderIds, allScoreFolders]);
   const [combineMethod, setCombineMethod] = useState<CombineMethod>('combined_scores');
   const [isFolderDropdownOpen, setIsFolderDropdownOpen] = useState(false);
   const [isRuleDropdownOpen, setIsRuleDropdownOpen] = useState(false);
@@ -461,7 +487,7 @@ export function StaffPortal({ data, onLogout, onOpenSyncModal, syncProps }: Staf
                       <div className="flex items-center gap-2 overflow-hidden">
                         <span className="text-sm font-bold text-slate-800 truncate">
                           {dashboardFolderId === 'all' ? '📂 All Folders (Pooled Analytics)' : (
-                          <>📁 {activeDashboardFolder?.name} {activeDashboardFolder?.type ? `(${formatFolderType(activeDashboardFolder.type)})` : ''}</>
+                          <>📁 {activeDashboardFolder?.name} {(activeDashboardFolder?.folderType ?? activeDashboardFolder?.type) ? `(${formatFolderType(activeDashboardFolder.folderType ?? activeDashboardFolder.type)})` : ''}</>
                           )}
                         </span>
                       </div>
@@ -522,7 +548,7 @@ export function StaffPortal({ data, onLogout, onOpenSyncModal, syncProps }: Staf
                                 >
                                   <div className="flex flex-col min-w-0 flex-1">
                                     <span className="text-xs font-bold text-slate-800 truncate">📁 {folder.name}</span>
-                                    <span className="text-[10px] text-slate-400 uppercase font-black">{formatFolderType(folder.type)}</span>
+                                    <span className="text-[10px] text-slate-400 uppercase font-black">{formatFolderType(folder.folderType ?? folder.type)}</span>
                                   </div>
                                   {dashboardFolderId === folder.id && <Check className="w-4 h-4 text-teal-600" />}
                                 </button>
@@ -569,7 +595,7 @@ export function StaffPortal({ data, onLogout, onOpenSyncModal, syncProps }: Staf
                         />
                         <div className="flex flex-col min-w-0">
                           <span className="text-xs font-bold text-slate-900 dark:text-white truncate">{folder.name}</span>
-                          <span className="text-[10px] text-slate-400 uppercase font-black">{formatFolderType(folder.type)}</span>
+                          <span className="text-[10px] text-slate-400 uppercase font-black">{formatFolderType(folder.folderType ?? folder.type)}</span>
                         </div>
                       </label>
                     ))}
@@ -744,7 +770,53 @@ export function StaffPortal({ data, onLogout, onOpenSyncModal, syncProps }: Staf
         </div>
         </div>
       {activeTab === 'users' && (
-        <AllUsersDirectory users={allUsers} loading={loading} onEditUser={() => {}} />
+        <AllUsersDirectory users={allUsers} loading={loading} onEditUser={(u) => setEditingUser(u)} />
+      )}
+
+      {editingUser && (
+        <EditUserModal 
+          user={editingUser} 
+          currentUserRole={getUserRole(userData)}
+          isOpen={!!editingUser} 
+          onClose={() => setEditingUser(null)} 
+          onSave={async (updatedUser) => {
+            try {
+              if (editingUser.role === 'Admin' || editingUser.role === 'Staff') {
+                alert("Staff users are only authorized to edit Reviewee accounts.");
+                return;
+              }
+              const docId = updatedUser.uid || updatedUser.doc_id;
+              if (docId) {
+                await clientUpdateUser(docId, {
+                  first_name: updatedUser.firstName,
+                  firstName: updatedUser.firstName,
+                  middle_name: updatedUser.middleName,
+                  middleName: updatedUser.middleName,
+                  last_name: updatedUser.lastName,
+                  lastName: updatedUser.lastName,
+                  email: updatedUser.email,
+                  role: updatedUser.role,
+                  seq_id: updatedUser.seqId,
+                  seqId: updatedUser.seqId,
+                  id_number: updatedUser.seqId,
+                  idNumber: updatedUser.seqId,
+                  srcId: updatedUser.seqId,
+                  studentId: updatedUser.seqId,
+                  school_name: updatedUser.schoolName,
+                  schoolName: updatedUser.schoolName,
+                  school: updatedUser.schoolName,
+                  review_branch: updatedUser.reviewBranch,
+                  reviewBranch: updatedUser.reviewBranch,
+                  branch: updatedUser.reviewBranch,
+                });
+                alert("Reviewee account updated successfully!");
+              }
+            } catch (error) {
+              console.error("Failed to update user:", error);
+              alert("Failed to update user.");
+            }
+          }}
+        />
       )}
 
       {activeTab === 'profile' && (

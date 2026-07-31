@@ -16,7 +16,7 @@ export function useScoreFolders() {
     }
 
     const q = query(
-      collection(firestoreDb, 'scoreFolders'),
+      collection(firestoreDb, 'score_folders'),
       orderBy('createdAt', 'desc')
     );
 

@@ -4,8 +4,10 @@ import { RevieweeData, ScoreFolder } from '../../types';
 import { ScoreRecord, parseScores } from '../../utils/scoreParser';
 import { normalizeScoreCategory, normalizeScoreSubject } from '../../utils/scoreFieldResolver';
 import { useScoreFolders } from '../../hooks/useScoreFolders';
-import { isRevieweeInFolderScope } from '../../utils/folderScope';
+import { isRevieweeInFolderScope, formatFolderType, isFolderVisibleToReviewee } from '../../utils/folderScope';
+import { getFolderTypeLabel } from '../../constants/folderTypes';
 import { formatScore } from '../../utils/formatUtils';
+import { resolveCanonicalUserIdentity } from '../../services/userIdentityResolver';
 
 const SUBJECTS_BY_AREA: Record<string, { code: string; title: string }[]> = {
   "CLJ": [
@@ -64,14 +66,6 @@ const SUBJECTS_BY_AREA: Record<string, { code: string; title: string }[]> = {
 const MAJOR_AREAS = ["CLJ", "LEA", "CDI", "FS", "CRIM", "CA"];
 const CATEGORIES = ["Diagnostic", "Pretest", "Posttest", "Quiz", "Daily Evaluation", "Removal", "Preboard"];
 
-function formatFolderType(type: string): string {
-  if (!type) return 'N/A';
-  return type
-    .split('_')
-    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(' ');
-}
-
 function getScoreColor(rating: number) {
   if (rating >= 80) return { text: "teal-600", bg: "teal-50", label: "Very Good" };
   if (rating >= 70) return { text: "emerald-600", bg: "emerald-50", label: "Above Average" };
@@ -87,18 +81,27 @@ interface Props {
 export default function RevieweeScoresDashboard({ currentUser }: Props) {
   const { folders } = useScoreFolders();
   const publishedFolders = useMemo(() => {
-    return folders.filter(f => 
-      f.publicationStatus === 'published' && 
-      !f.isArchived && 
-      isRevieweeInFolderScope(currentUser, f)
-    );
+    return folders.filter(f => isFolderVisibleToReviewee(f, currentUser));
   }, [folders, currentUser]);
   const [selectedFolder, setSelectedFolder] = useState<ScoreFolder | null>(null);
   
   // Set default folder when folders load
   React.useEffect(() => {
-    if (publishedFolders.length > 0 && !selectedFolder) {
-      setSelectedFolder(publishedFolders[0]);
+    if (publishedFolders.length > 0) {
+      if (!selectedFolder) {
+        setSelectedFolder(publishedFolders[0]);
+      } else {
+        const stillExists = publishedFolders.find(f => f.id === selectedFolder.id);
+        if (stillExists) {
+          if (stillExists.folderType !== selectedFolder.folderType || stillExists.type !== selectedFolder.type || stillExists.name !== selectedFolder.name) {
+            setSelectedFolder(stillExists);
+          }
+        } else {
+          setSelectedFolder(publishedFolders[0]);
+        }
+      }
+    } else {
+      setSelectedFolder(null);
     }
   }, [publishedFolders, selectedFolder]);
 
@@ -248,7 +251,7 @@ export default function RevieweeScoresDashboard({ currentUser }: Props) {
               }`}
             >
               <Folder size={14} className={selectedFolder?.id === folder.id ? "text-teal-400" : "text-slate-400"} />
-              {formatFolderType(folder.type)}
+              {getFolderTypeLabel(folder.folderType ?? folder.type)}
             </button>
           ))}
           {publishedFolders.length === 0 && (
@@ -300,7 +303,7 @@ export default function RevieweeScoresDashboard({ currentUser }: Props) {
             <div className="min-w-0">
               <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Reviewee ID</p>
               <p className="text-base font-black text-slate-900 truncate">{currentUser.id_number || 'No ID'}</p>
-              <p className="text-[10px] font-bold text-slate-400 mt-0.5 truncate">{currentUser.first_name} {currentUser.last_name}</p>
+              <p className="text-[10px] font-bold text-slate-400 mt-0.5 truncate">{resolveCanonicalUserIdentity(currentUser).fullName || `${currentUser.first_name || ''} ${currentUser.last_name || ''}`}</p>
             </div>
           </div>
         </div>

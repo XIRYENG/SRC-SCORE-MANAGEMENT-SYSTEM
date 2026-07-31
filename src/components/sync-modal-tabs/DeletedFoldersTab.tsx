@@ -15,10 +15,13 @@ export const DeletedFoldersTab: React.FC<DeletedFoldersTabProps> = ({ currentUse
 
   useEffect(() => {
     if (!firestoreDb) return;
-    const q = query(collection(firestoreDb, 'scoreFolders'), where('isDeleted', '==', true));
+    const q = query(collection(firestoreDb, 'score_folders'), where('isDeleted', '==', true));
     const unsub = onSnapshot(q, (snapshot) => {
       const folders: ScoreFolder[] = [];
-      snapshot.forEach(doc => folders.push(doc.data() as ScoreFolder));
+      snapshot.forEach(doc => {
+        const data = doc.data();
+        folders.push({ id: doc.id, ...data } as ScoreFolder);
+      });
       setDeletedFolders(folders.sort((a, b) => b.deletedAt?.seconds - a.deletedAt?.seconds));
       setLoading(false);
     });
@@ -28,7 +31,7 @@ export const DeletedFoldersTab: React.FC<DeletedFoldersTabProps> = ({ currentUse
   const restoreFolder = async (folderId: string) => {
     if (!currentUser) return;
     try {
-      await updateDoc(doc(firestoreDb, 'scoreFolders', folderId), {
+      await updateDoc(doc(firestoreDb, 'score_folders', folderId), {
         isDeleted: false,
         deletedAt: null,
         deletedBy: null,

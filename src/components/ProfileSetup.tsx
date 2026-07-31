@@ -286,7 +286,8 @@ export function ProfileSetup({ onCompleted, initialData }: ProfileSetupProps) {
               required
               placeholder="e.g. Juan"
               value={firstName}
-              onChange={(e) => setFirstName(e.target.value)}
+              onChange={(e) => setFirstName(e.target.value.toUpperCase())}
+              onBlur={() => setFirstName(firstName.trim().toUpperCase())}
               className="w-full px-4 py-3 bg-slate-50 border border-slate-200 focus:border-teal-500 focus:bg-white rounded-2xl text-sm font-medium transition-all outline-none focus:ring-4 focus:ring-teal-500/10 text-slate-900"
             />
           </div>
@@ -300,7 +301,8 @@ export function ProfileSetup({ onCompleted, initialData }: ProfileSetupProps) {
               type="text"
               placeholder="e.g. Santos"
               value={middleName}
-              onChange={(e) => setMiddleName(e.target.value)}
+              onChange={(e) => setMiddleName(e.target.value.toUpperCase())}
+              onBlur={() => setMiddleName(middleName.trim().toUpperCase())}
               className="w-full px-4 py-3 bg-slate-50 border border-slate-200 focus:border-teal-500 focus:bg-white rounded-2xl text-sm font-medium transition-all outline-none focus:ring-4 focus:ring-teal-500/10 text-slate-900"
             />
           </div>
@@ -316,7 +318,8 @@ export function ProfileSetup({ onCompleted, initialData }: ProfileSetupProps) {
             required
             placeholder="e.g. Dela Cruz"
             value={lastName}
-            onChange={(e) => setLastName(e.target.value)}
+            onChange={(e) => setLastName(e.target.value.toUpperCase())}
+            onBlur={() => setLastName(lastName.trim().toUpperCase())}
             className="w-full px-4 py-3 bg-slate-50 border border-slate-200 focus:border-teal-500 focus:bg-white rounded-2xl text-sm font-medium transition-all outline-none focus:ring-4 focus:ring-teal-500/10 text-slate-900"
           />
         </div>
@@ -459,9 +462,10 @@ export function ProfileSetup({ onCompleted, initialData }: ProfileSetupProps) {
               value={selectedSchool ? selectedSchool : schoolInput}
               onChange={(e) => {
                 setSelectedSchool('');
-                setSchoolInput(e.target.value);
+                setSchoolInput(e.target.value.toUpperCase());
                 setShowSchoolDropdown(true);
               }}
+              onBlur={() => setSchoolInput(schoolInput.trim().toUpperCase())}
               onFocus={() => setShowSchoolDropdown(true)}
               className="w-full px-4 py-3 bg-slate-50 border border-slate-200 focus:border-teal-500 focus:bg-white rounded-2xl text-sm font-medium transition-all outline-none focus:ring-4 focus:ring-teal-500/10 pr-10 text-slate-900"
             />
@@ -526,9 +530,10 @@ export function ProfileSetup({ onCompleted, initialData }: ProfileSetupProps) {
               value={selectedBranch ? selectedBranch : branchInput}
               onChange={(e) => {
                 setSelectedBranch('');
-                setBranchInput(e.target.value);
+                setBranchInput(e.target.value.toUpperCase());
                 setShowBranchDropdown(true);
               }}
+              onBlur={() => setBranchInput(branchInput.trim().toUpperCase())}
               onFocus={() => setShowBranchDropdown(true)}
               className="w-full px-4 py-3 bg-slate-50 border border-slate-200 focus:border-teal-500 focus:bg-white rounded-2xl text-sm font-medium transition-all outline-none focus:ring-4 focus:ring-teal-500/10 pr-10 text-slate-900"
             />

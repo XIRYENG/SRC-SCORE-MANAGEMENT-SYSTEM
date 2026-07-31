@@ -56,8 +56,9 @@ export const AllUsersDirectory: React.FC<AllUsersDirectoryProps> = ({ users, loa
     const canonical = resolveCanonicalUserIdentity(u);
     const name = formatFormalName(canonical);
     const email = canonical.email || 'No email';
-    const seqId = canonical.idNumber || u.doc_id || '—';
+    const seqId = canonical.idNumber || '—';
     const school = canonical.school || '—';
+    const branch = canonical.branch || '—';
     const status = u.accountStatus || u.status || 'Active';
 
     let roleBadgeColor = 'bg-teal-50 text-teal-700 border-teal-200';
@@ -71,6 +72,7 @@ export const AllUsersDirectory: React.FC<AllUsersDirectoryProps> = ({ users, loa
       email,
       seqId,
       school,
+      branch,
       role,
       status,
       roleBadgeColor,
@@ -179,6 +181,11 @@ export const AllUsersDirectory: React.FC<AllUsersDirectoryProps> = ({ users, loa
               key: 'school',
               header: 'School',
               render: (r) => <span className="text-xs font-medium text-slate-600">{r.school}</span>,
+            },
+            {
+              key: 'branch',
+              header: 'Branch',
+              render: (r) => <span className="text-xs font-medium text-slate-600">{r.branch}</span>,
             },
             {
               key: 'actions',

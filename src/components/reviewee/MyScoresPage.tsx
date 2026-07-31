@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { RevieweeData, ScoreFolder } from '../../types';
 import { useScoreFolders } from '../../hooks/useScoreFolders';
-import { isRevieweeInFolderScope } from '../../utils/folderScope';
+import { isRevieweeInFolderScope, isFolderVisibleToReviewee } from '../../utils/folderScope';
 import { MyScoresBoardSubjectAreas } from './MyScoresBoardSubjectAreas';
 import { DailyEvaluationSubjectTable, RevieweeDateCol } from './DailyEvaluationSubjectTable';
 import { calculateAggregatedAreaRating } from '../../lib/scoreCalculations';
@@ -13,13 +13,29 @@ import { motion, AnimatePresence } from 'motion/react';
 export function MyScoresPage({ revieweeData, scores }: { revieweeData: RevieweeData; scores: ScoreRecord[] }) {
   const { folders } = useScoreFolders();
   const publishedFolders = useMemo(() => {
-    return folders.filter(f => 
-      f.publicationStatus === 'published' && 
-      !f.isArchived && 
-      isRevieweeInFolderScope(revieweeData, f)
-    );
+    return folders.filter(f => isFolderVisibleToReviewee(f, revieweeData));
   }, [folders, revieweeData]);
-  const [selectedFolder, setSelectedFolder] = useState<ScoreFolder | null>(publishedFolders[0] || null);
+  const [selectedFolder, setSelectedFolder] = useState<ScoreFolder | null>(null);
+
+  React.useEffect(() => {
+    if (publishedFolders.length > 0) {
+      if (!selectedFolder) {
+        setSelectedFolder(publishedFolders[0]);
+      } else {
+        const stillExists = publishedFolders.find(f => f.id === selectedFolder.id);
+        if (stillExists) {
+          if (stillExists.folderType !== selectedFolder.folderType || stillExists.type !== selectedFolder.type || stillExists.name !== selectedFolder.name) {
+            setSelectedFolder(stillExists);
+          }
+        } else {
+          setSelectedFolder(publishedFolders[0]);
+        }
+      }
+    } else {
+      setSelectedFolder(null);
+    }
+  }, [publishedFolders, selectedFolder]);
+
   const [selectedArea, setSelectedArea] = useState<string>('CLJ');
   const [selectedCategory, setSelectedCategory] = useState<string>('Daily Evaluation');
 

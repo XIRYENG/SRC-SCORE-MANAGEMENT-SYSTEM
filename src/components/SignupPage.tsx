@@ -509,7 +509,8 @@ export function SignupPage({ onSuccess, onToggleLogin }: SignupPageProps) {
               required
               placeholder="Ariel"
               value={firstName}
-              onChange={(e) => setFirstName(e.target.value)}
+              onChange={(e) => setFirstName(e.target.value.toUpperCase())}
+              onBlur={() => setFirstName(firstName.trim().toUpperCase())}
               className={inputBase}
             />
           </div>
@@ -523,7 +524,8 @@ export function SignupPage({ onSuccess, onToggleLogin }: SignupPageProps) {
               type="text"
               placeholder="Orcia"
               value={middleName}
-              onChange={(e) => setMiddleName(e.target.value)}
+              onChange={(e) => setMiddleName(e.target.value.toUpperCase())}
+              onBlur={() => setMiddleName(middleName.trim().toUpperCase())}
               className={inputBase}
             />
           </div>
@@ -539,7 +541,8 @@ export function SignupPage({ onSuccess, onToggleLogin }: SignupPageProps) {
             required
             placeholder="Pesalver"
             value={lastName}
-            onChange={(e) => setLastName(e.target.value)}
+            onChange={(e) => setLastName(e.target.value.toUpperCase())}
+            onBlur={() => setLastName(lastName.trim().toUpperCase())}
             className={inputBase}
           />
         </div>
@@ -677,13 +680,15 @@ export function SignupPage({ onSuccess, onToggleLogin }: SignupPageProps) {
           <div className="relative">
             <input
               type="text"
+              required
               placeholder="Search or enter school name..."
               value={selectedSchool ? selectedSchool : schoolInput}
               onChange={(e) => {
                 setSelectedSchool('');
-                setSchoolInput(e.target.value);
+                setSchoolInput(e.target.value.toUpperCase());
                 setShowSchoolDropdown(true);
               }}
+              onBlur={() => setSchoolInput(schoolInput.trim().toUpperCase())}
               onFocus={() => setShowSchoolDropdown(true)}
               className={inputBase + " pr-10"}
             />
@@ -743,13 +748,15 @@ export function SignupPage({ onSuccess, onToggleLogin }: SignupPageProps) {
           <div className="relative">
             <input
               type="text"
+              required
               placeholder="Search or enter review branch..."
               value={selectedBranch ? selectedBranch : branchInput}
               onChange={(e) => {
                 setSelectedBranch('');
-                setBranchInput(e.target.value);
+                setBranchInput(e.target.value.toUpperCase());
                 setShowBranchDropdown(true);
               }}
+              onBlur={() => setBranchInput(branchInput.trim().toUpperCase())}
               onFocus={() => setShowBranchDropdown(true)}
               className={inputBase + " pr-10"}
             />
@@ -810,7 +817,8 @@ export function SignupPage({ onSuccess, onToggleLogin }: SignupPageProps) {
             required
             placeholder="username@gmail.com"
             value={email}
-            onChange={(e) => setEmail(e.target.value.toLowerCase())}
+            onChange={(e) => setEmail(e.target.value.toUpperCase())}
+            onBlur={() => setEmail(email.trim().toUpperCase())}
             autoCapitalize="none"
             autoCorrect="off"
             spellCheck={false}

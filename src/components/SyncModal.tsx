@@ -19,7 +19,7 @@ import { firestoreDb, initFirebaseClient, clientDeleteUser } from '../utils/fire
 
 import type { RevieweeData } from '../types';
 import { normalizeRole, isAdmin, isStaff, isAdminLike, getUserRole, hasScoreEditPermission } from '../utils/roleUtils';
-import { getCanonicalFullName } from '../utils/nameNormalization';
+import { getCanonicalFullName, getCanonicalIdNumber, getCanonicalBirthdate, getCanonicalContactInfo } from '../utils/nameNormalization';
 import { resolveCanonicalUserIdentity, isValidScoreManagementUser, isValidRevieweeRecord, formatFormalName, compareUsersAlphabetically, formatMiddleName, cleanOptionalName } from '../services/userIdentityResolver';
 import { getResolvedScore, isScoreAreaActivated, getScoreFieldName, ScoreAreaActivation, getResolvedDetailedScore } from '../utils/scoreFieldResolver';
 import { DEFAULT_GRADE_WEIGHTS, GradeWeights } from '../utils/gradeCalculation';
@@ -930,17 +930,26 @@ export const SyncModal: React.FC<SyncModalProps> = ({
     }
 
     if (filterSchool !== 'ALL') {
-      filtered = filtered.filter(u => String(u.school_name || '').trim().toLowerCase() === filterSchool.toLowerCase());
+      filtered = filtered.filter(u => {
+        const sch = String(u.school_name || u.schoolName || u.school || '').trim().toLowerCase();
+        return sch === filterSchool.toLowerCase();
+      });
     }
 
     if (searchUserQuery) {
       const q = searchUserQuery.toLowerCase();
       filtered = filtered.filter(u => {
-        const fullName = `${u.last_name || ''}, ${u.first_name || ''} ${u.middle_name || ''}`.trim().toLowerCase();
+        const canonical = resolveCanonicalUserIdentity(u);
+        const fullName = `${u.last_name || canonical.lastName || ''}, ${u.first_name || canonical.firstName || ''} ${u.middle_name || canonical.middleName || ''}`.trim().toLowerCase();
+        const seqIdStr = String(u.seq_id || u.seqId || u.id_number || u.idNumber || canonical.idNumber || '').toLowerCase();
+        const schoolStr = String(u.school_name || u.schoolName || u.school || canonical.school || '').toLowerCase();
+        const emailStr = String(u.email || u.emailAddress || u.email_address || canonical.email || '').toLowerCase();
+        
         return fullName.includes(q) ||
-               String(u.seq_id).toLowerCase().includes(q) ||
-               String(u.school_name).toLowerCase().includes(q) ||
-               `${u.first_name || ''} ${u.middle_name || ''} ${u.last_name || ''}`.trim().toLowerCase().includes(q);
+               seqIdStr.includes(q) ||
+               schoolStr.includes(q) ||
+               emailStr.includes(q) ||
+               `${u.first_name || canonical.firstName || ''} ${u.middle_name || canonical.middleName || ''} ${u.last_name || canonical.lastName || ''}`.trim().toLowerCase().includes(q);
       });
     }
 
@@ -949,8 +958,8 @@ export const SyncModal: React.FC<SyncModalProps> = ({
       let valB: any;
 
       if (sortColumn === 'id') {
-        const idA = String(a.seq_id || '').toLowerCase();
-        const idB = String(b.seq_id || '').toLowerCase();
+        const idA = String(a.seq_id || a.seqId || a.id_number || a.idNumber || '').toLowerCase();
+        const idB = String(b.seq_id || b.seqId || b.id_number || b.idNumber || '').toLowerCase();
         const numA = parseInt(idA);
         const numB = parseInt(idB);
         if (!isNaN(numA) && !isNaN(numB) && idA.length === idB.length) {
@@ -964,14 +973,20 @@ export const SyncModal: React.FC<SyncModalProps> = ({
         const comp = compareUsersAlphabetically(a, b);
         return sortDirection === 'asc' ? comp : -comp;
       } else if (sortColumn === 'school') {
-        valA = String(a.school_name || '').toLowerCase();
-        valB = String(b.school_name || '').toLowerCase();
+        valA = String(a.school_name || a.schoolName || a.school || '').toLowerCase();
+        valB = String(b.school_name || b.schoolName || b.school || '').toLowerCase();
       } else if (sortColumn === 'status') {
         valA = a.is_synced ? 1 : 0;
         valB = b.is_synced ? 1 : 0;
       } else if (sortColumn === 'timestamp') {
-        valA = a.created_at ? new Date(a.created_at).getTime() : 0;
-        valB = b.created_at ? new Date(b.created_at).getTime() : 0;
+        const parseTime = (val: any) => {
+          if (!val) return 0;
+          if (typeof val === 'object' && val.seconds !== undefined) return val.seconds * 1000;
+          const t = new Date(val).getTime();
+          return isNaN(t) ? 0 : t;
+        };
+        valA = parseTime(a.created_at || a.createdAt || a.registered_at);
+        valB = parseTime(b.created_at || b.createdAt || b.registered_at);
       } else if (sortColumn === 'overall_grade') {
         valA = selectedCategories.reduce((acc, cat) => {
           const detailed = getCategoryDetailedScores(a, cat);
@@ -2823,10 +2838,10 @@ function formatExamDates(dateStrings: string[]): string {
     }
   };
 
-  const fetchDuplicates = async () => {
+  const fetchDuplicates = async (preserveMessage = false) => {
     setCheckingDuplicates(true);
     setSelectionsToKeep({});
-    setResolveMessage(null);
+    if (!preserveMessage) setResolveMessage(null);
     setConfirmResolve(false);
     try {
       const response = await fetch('/api/find-duplicates', {
@@ -2868,7 +2883,8 @@ function formatExamDates(dateStrings: string[]): string {
             if (scoresB !== scoresA) return scoresB - scoresA;
             return new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime();
           });
-          initialKeeps[`id_${idx}`] = [sorted[0].doc_id];
+          const recId = sorted[0].doc_id || sorted[0].id || sorted[0].uid || sorted[0].docId;
+          if (recId) initialKeeps[`id_${idx}`] = [recId];
         }
       });
 
@@ -2883,7 +2899,8 @@ function formatExamDates(dateStrings: string[]): string {
             if (scoresB !== scoresA) return scoresB - scoresA;
             return new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime();
           });
-          initialKeeps[`name_${idx}`] = [sorted[0].doc_id];
+          const recId = sorted[0].doc_id || sorted[0].id || sorted[0].uid || sorted[0].docId;
+          if (recId) initialKeeps[`name_${idx}`] = [recId];
         }
       });
 
@@ -2897,60 +2914,119 @@ function formatExamDates(dateStrings: string[]): string {
     }
   };
 
-  const [confirmResolve, setConfirmResolve] = useState(false);
+  const handleRemoveNameGroup = (indexToRemove: number) => {
+    setSimilarNames(prev => {
+      const updatedGroups = prev.filter((_, idx) => idx !== indexToRemove);
+      setSelectionsToKeep(prevKeeps => {
+        const newKeeps: Record<string, string[]> = {};
+        Object.keys(prevKeeps).forEach(key => {
+          if (key.startsWith('id_')) {
+            newKeeps[key] = prevKeeps[key];
+          }
+        });
+        updatedGroups.forEach((group, newIdx) => {
+          const oldIdx = prev.findIndex(g => g === group);
+          if (oldIdx !== -1 && prevKeeps[`name_${oldIdx}`]) {
+            newKeeps[`name_${newIdx}`] = prevKeeps[`name_${oldIdx}`];
+          }
+        });
+        return newKeeps;
+      });
+      return updatedGroups;
+    });
+  };
 
-  const handleResolveDuplicates = async () => {
+  const handleRemoveUnselectedNameGroups = () => {
+    setSimilarNames(prev => {
+      const remaining: any[][] = [];
+      const newKeeps: Record<string, string[]> = {};
+      Object.keys(selectionsToKeep).forEach(key => {
+        if (key.startsWith('id_')) {
+          newKeeps[key] = selectionsToKeep[key];
+        }
+      });
+
+      prev.forEach((group, idx) => {
+        const keep = selectionsToKeep[`name_${idx}`] || [];
+        if (keep.length > 0) {
+          const newIdx = remaining.length;
+          remaining.push(group);
+          newKeeps[`name_${newIdx}`] = keep;
+        }
+      });
+
+      setSelectionsToKeep(newKeeps);
+      return remaining;
+    });
+  };
+
+  const [confirmResolve, setConfirmResolve] = useState(false);
+  const [duplicateConfirmModal, setDuplicateConfirmModal] = useState<{ open: boolean; mode: 'shared_ids' | 'names' | 'all' } | null>(null);
+
+  const handleResolveDuplicates = async (mode: 'shared_ids' | 'names' | 'all' = 'all') => {
     setResolvingDuplicates(true);
     setResolveMessage(null);
     try {
       const resolutions: { keepDocId: string; mergeFromDocIds: string[] }[] = [];
       const recordsToDelete: string[] = [];
 
-      // Process ID duplicates
-      duplicateIds.forEach((group, idx) => {
-        const keepIds = selectionsToKeep[`id_${idx}`] || [];
-        if (keepIds.length > 0) {
-          const keepDocId = keepIds[0];
-          const mergeFromDocIds: string[] = [];
-          group.forEach(r => {
-            if (r.doc_id !== keepDocId) {
-              if (!recordsToDelete.includes(r.doc_id)) recordsToDelete.push(r.doc_id);
-              mergeFromDocIds.push(r.doc_id);
+      // Process ID duplicates if applicable
+      if (mode === 'shared_ids' || mode === 'all') {
+        duplicateIds.forEach((group, idx) => {
+          const keepIds = selectionsToKeep[`id_${idx}`] || [];
+          if (keepIds.length > 0) {
+            const keepDocId = keepIds[0];
+            const mergeFromDocIds: string[] = [];
+            group.forEach(r => {
+              const rDocId = r.doc_id || r.id || r.uid || r.docId;
+              if (rDocId && rDocId !== keepDocId) {
+                if (!recordsToDelete.includes(rDocId)) recordsToDelete.push(rDocId);
+                mergeFromDocIds.push(rDocId);
+              }
+            });
+            if (mergeFromDocIds.length > 0) {
+              resolutions.push({ keepDocId, mergeFromDocIds });
             }
-          });
-          if (mergeFromDocIds.length > 0) {
-            resolutions.push({ keepDocId, mergeFromDocIds });
           }
-        }
-      });
-
-      // Process Name duplicates
-      similarNames.forEach((group, idx) => {
-        const keepIds = selectionsToKeep[`name_${idx}`] || [];
-        if (keepIds.length > 0) {
-          const keepDocId = keepIds[0];
-          const mergeFromDocIds: string[] = [];
-          group.forEach(r => {
-            if (r.doc_id !== keepDocId) {
-              if (!recordsToDelete.includes(r.doc_id)) recordsToDelete.push(r.doc_id);
-              mergeFromDocIds.push(r.doc_id);
-            }
-          });
-          if (mergeFromDocIds.length > 0) {
-            resolutions.push({ keepDocId, mergeFromDocIds });
-          }
-        }
-      });
-
-      if (recordsToDelete.length === 0) {
-        setResolveMessage({ type: 'error', text: 'Please select at least one record to keep in any group before proceeding.' });
-        setResolvingDuplicates(false);
-        return;
+        });
       }
 
-      if (!confirmResolve) {
-        setConfirmResolve(true);
+      // Process Name duplicates if applicable
+      if (mode === 'names' || mode === 'all') {
+        similarNames.forEach((group, idx) => {
+          const keepIds = selectionsToKeep[`name_${idx}`] || [];
+          if (keepIds.length > 0) {
+            const keepDocId = keepIds[0];
+            const mergeFromDocIds: string[] = [];
+            group.forEach(r => {
+              const rDocId = r.doc_id || r.id || r.uid || r.docId;
+              if (rDocId && rDocId !== keepDocId) {
+                if (!recordsToDelete.includes(rDocId)) recordsToDelete.push(rDocId);
+                mergeFromDocIds.push(rDocId);
+              }
+            });
+            if (mergeFromDocIds.length > 0) {
+              resolutions.push({ keepDocId, mergeFromDocIds });
+            }
+          }
+        });
+      }
+
+      if (recordsToDelete.length === 0) {
+        if (mode === 'names' || mode === 'all') {
+          handleRemoveUnselectedNameGroups();
+          setResolveMessage({
+            type: 'success',
+            text: 'Unselected name group(s) marked as correct and removed from duplicate list.'
+          });
+        } else {
+          setResolveMessage({
+            type: 'error',
+            text: `Please select at least one record to keep in ${mode === 'shared_ids' ? 'Shared IDs' : 'any group'} before proceeding.`
+          });
+        }
         setResolvingDuplicates(false);
+        setDuplicateConfirmModal(null);
         return;
       }
 
@@ -2969,8 +3045,12 @@ function formatExamDates(dateStrings: string[]): string {
 
       if (!response.ok) throw new Error("Failed to delete duplicates");
 
-      setResolveMessage({ type: 'success', text: `Successfully resolved duplicates and merged scores.` });
-      await fetchDuplicates(); // Refresh
+      setDuplicateConfirmModal(null);
+      await fetchDuplicates(true);
+      setResolveMessage({
+        type: 'success',
+        text: `Successfully resolved ${mode === 'shared_ids' ? 'Shared IDs' : mode === 'names' ? 'Duplicate Names' : 'duplicates'} and merged scores.`
+      });
     } catch (e) {
       console.error(e);
       setResolveMessage({ type: 'error', text: 'Error resolving duplicates' });
@@ -4793,7 +4873,9 @@ function formatExamDates(dateStrings: string[]): string {
                                   }} 
                                 />
                               </td>
-                              <td className="px-2 py-1.5 font-sans text-xs font-bold text-slate-700 whitespace-nowrap w-[90px] min-w-[90px]" suppressHydrationWarning>{highlightMatch(u.seq_id, searchUserQuery)}</td>
+                              <td className="px-2 py-1.5 font-sans text-xs font-bold text-slate-700 whitespace-nowrap w-[90px] min-w-[90px]" suppressHydrationWarning>
+                                {highlightMatch(u.seq_id || u.seqId || u.id_number || u.idNumber || u.student_id || u.srcId || '—', searchUserQuery)}
+                              </td>
                               <td className="px-2 py-1.5 font-bold text-slate-900 uppercase text-base leading-tight break-words min-w-[250px]">
                                 {formatFormalName({
                                   firstName: u.first_name || u.firstName,
@@ -4804,13 +4886,19 @@ function formatExamDates(dateStrings: string[]): string {
                                 {isAdminLike(u) && (
                                   <div className="font-bold text-emerald-600 mt-1 text-[9px] uppercase tracking-wider">{isAdmin(u) ? "ADMIN" : "STAFF"}</div>
                                 )}
-                                <div className="font-normal text-slate-400 mt-1 sm:hidden leading-tight break-words">{u.school_name}</div>
+                                <div className="font-normal text-slate-400 mt-1 sm:hidden leading-tight break-words">{u.school_name || u.schoolName || u.school || 'CHRIST THE KING COLLEGE DE MARANDING, INC.'}</div>
                               </td>
                               <td className="p-1 sm:px-2 sm:py-1.5 text-[9px] text-slate-500 uppercase leading-tight break-words hidden sm:table-cell">
-                                {u.school_name}
+                                {u.school_name || u.schoolName || u.school || 'CHRIST THE KING COLLEGE DE MARANDING, INC.'}
                               </td>
                               <td className="p-1 sm:px-2 sm:py-1.5 text-xs text-slate-500 whitespace-nowrap">
-                                {u.created_at ? new Date(u.created_at).toLocaleString() : 'N/A'}
+                                {(() => {
+                                  const dt = u.created_at || u.createdAt || u.registered_at;
+                                  if (!dt) return 'N/A';
+                                  if (typeof dt === 'object' && dt.seconds !== undefined) return new Date(dt.seconds * 1000).toLocaleString();
+                                  const d = new Date(dt);
+                                  return !isNaN(d.getTime()) ? d.toLocaleString() : String(dt);
+                                })()}
                               </td>
                               <td className="p-1 sm:px-2 sm:py-1.5 text-center">
                                 {syncingUserId === u.doc_id ? (
@@ -5014,7 +5102,28 @@ function formatExamDates(dateStrings: string[]): string {
                   ) : (
                     <div className="flex flex-col md:flex-row gap-6 h-full">
                       <div className="flex-1 space-y-6">
-                        <h5 className="font-bold text-amber-600 mb-3 text-xs uppercase flex items-center gap-1.5 bg-amber-50 p-2 rounded-lg"><CheckCircle2 className="w-4 h-4"/> Duplicate / Similar Name Groups ({similarNames.length} groups)</h5>
+                        <div className="flex items-center justify-between bg-amber-50 p-2.5 rounded-lg border border-amber-200">
+                          <h5 className="font-bold text-amber-800 text-xs uppercase flex items-center gap-1.5"><CheckCircle2 className="w-4 h-4 text-amber-600"/> Duplicate / Similar Name Groups ({similarNames.length} groups)</h5>
+                          <div className="flex items-center gap-2">
+                            {similarNames.some((_, idx) => (!selectionsToKeep[`name_${idx}`] || selectionsToKeep[`name_${idx}`].length === 0)) && (
+                              <button
+                                onClick={handleRemoveUnselectedNameGroups}
+                                className="px-2 py-1 bg-amber-200 hover:bg-amber-300 text-amber-900 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-colors"
+                                title="Remove all groups with no selected names because the names are correct"
+                              >
+                                Remove Unselected ({similarNames.filter((_, idx) => (!selectionsToKeep[`name_${idx}`] || selectionsToKeep[`name_${idx}`].length === 0)).length})
+                              </button>
+                            )}
+                            {similarNames.length > 0 && (
+                              <button
+                                onClick={() => setDuplicateConfirmModal({ open: true, mode: 'names' })}
+                                className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-[10px] font-bold uppercase tracking-wider transition-colors shadow-xs flex items-center gap-1"
+                              >
+                                Resolve Names ({similarNames.length})
+                              </button>
+                            )}
+                          </div>
+                        </div>
                         {similarNames.length === 0 ? <p className="text-xs text-slate-500 italic pl-2">No duplicate or similar name records found.</p> : (
                           <div className="space-y-3">
                             {similarNames.map((group, idx) => {
@@ -5031,11 +5140,37 @@ function formatExamDates(dateStrings: string[]): string {
                                       <HelpCircle className="w-3 h-3 text-amber-500 cursor-help" />
                                     </span>
                                   </span>
-                                  <span className="bg-white px-2 py-0.5 rounded shadow-sm text-[10px]">{group.length} records</span>
+                                  <div className="flex items-center gap-2">
+                                    <span className="bg-white px-2 py-0.5 rounded shadow-sm text-[10px]">{group.length} records</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleRemoveNameGroup(idx)}
+                                      className="px-2 py-0.5 bg-amber-200 hover:bg-amber-300 text-amber-900 rounded text-[10px] font-bold normal-case flex items-center gap-1 transition-colors"
+                                      title="Remove this group because the names are correct and not duplicates"
+                                    >
+                                      <X className="w-3 h-3" />
+                                      <span>Dismiss (Names Correct)</span>
+                                    </button>
+                                  </div>
                                 </div>
+                                {(!selectionsToKeep[`name_${idx}`] || selectionsToKeep[`name_${idx}`].length === 0) && (
+                                  <div className="px-3 py-2 bg-emerald-50 border-b border-emerald-100 text-emerald-800 text-[11px] font-semibold flex justify-between items-center">
+                                    <span>✅ No name selected — Names in this group are considered correct (not duplicates).</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleRemoveNameGroup(idx)}
+                                      className="px-2 py-0.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[10px] font-bold transition-colors"
+                                    >
+                                      Remove Group
+                                    </button>
+                                  </div>
+                                )}
                                 <div className="p-3 bg-white flex flex-col xl:flex-row gap-3 overflow-x-auto">
                                   {group.map((r: any, i: number) => {
                                     const canonical = r._canonical || getCanonicalFullName(r);
+                                    const canonicalId = r._canonicalId || getCanonicalIdNumber(r) || 'N/A';
+                                    const bday = r._canonicalBirthdate || getCanonicalBirthdate(r);
+                                    const contact = r._canonicalContact || getCanonicalContactInfo(r);
                                     const roleStr = String(r?.role || r?.userRole || r?.accountType || 'Reviewee').toLowerCase().replace(/[\s\-_]/g, '');
                                     const roleWeight = (roleStr === 'admin' || roleStr === 'superadmin' || roleStr === 'owner') ? 3 : (roleStr === 'staff' || roleStr === 'coadmin' || roleStr === 'instructor' || roleStr === 'encoder') ? 2 : 1;
                                     const maxGroupWeight = Math.max(...group.map((item: any) => {
@@ -5087,16 +5222,22 @@ function formatExamDates(dateStrings: string[]): string {
                                         </div>
 
                                         <div className="text-[10px] text-slate-600 bg-slate-50 p-2 rounded-lg border border-slate-100 space-y-1">
-                                          <div className="flex justify-between gap-2"><span className="font-semibold text-slate-400">First:</span> <span className="font-bold text-slate-800 text-right truncate">{r.first_name || r.firstName || r['First Name'] || <span className="italic text-slate-400">None</span>}</span></div>
-                                          <div className="flex justify-between gap-2"><span className="font-semibold text-slate-400">Middle:</span> <span className="font-bold text-slate-800 text-right truncate">{formatMiddleName(r.middle_name || r.middleName || r['Middle Name'])}</span></div>
-                                          <div className="flex justify-between gap-2"><span className="font-semibold text-slate-400">Last:</span> <span className="font-bold text-slate-800 text-right truncate">{r.last_name || r.lastName || r['Last Name'] || <span className="italic text-slate-400">None</span>}</span></div>
+                                          <div className="flex justify-between gap-2"><span className="font-semibold text-slate-400">First:</span> <span className="font-bold text-slate-800 text-right truncate">{canonical.firstName || <span className="italic text-slate-400">None</span>}</span></div>
+                                          <div className="flex justify-between gap-2"><span className="font-semibold text-slate-400">Middle:</span> <span className="font-bold text-slate-800 text-right truncate">{formatMiddleName(canonical.middleName) || <span className="italic text-slate-400">None</span>}</span></div>
+                                          <div className="flex justify-between gap-2"><span className="font-semibold text-slate-400">Last:</span> <span className="font-bold text-slate-800 text-right truncate">{canonical.lastName || <span className="italic text-slate-400">None</span>}</span></div>
+                                          {bday && (
+                                            <div className="flex justify-between gap-2 border-t border-slate-200/60 pt-1 mt-1"><span className="font-semibold text-slate-400">Birthdate:</span> <span className="font-bold text-slate-800 text-right truncate">{bday}</span></div>
+                                          )}
+                                          {(contact.phone || contact.email) && (
+                                            <div className="flex justify-between gap-2 border-t border-slate-200/60 pt-1 mt-1"><span className="font-semibold text-slate-400">Contact:</span> <span className="font-bold text-slate-800 text-right truncate">{[contact.email, contact.phone].filter(Boolean).join(' | ')}</span></div>
+                                          )}
                                           {(r.name || r.full_name || r.fullName || r.displayName) && (
-                                            <div className="flex justify-between gap-2 border-t border-slate-200/60 pt-1 mt-1"><span className="font-semibold text-slate-400">Full field:</span> <span className="font-bold text-slate-800 text-right truncate">{r.name || r.full_name || r.fullName || r.displayName}</span></div>
+                                            <div className="flex justify-between gap-2 border-t border-slate-200/60 pt-1 mt-1"><span className="font-semibold text-slate-400">Raw field:</span> <span className="font-bold text-slate-800 text-right truncate">{r.name || r.full_name || r.fullName || r.displayName}</span></div>
                                           )}
                                         </div>
 
-                                        <div className="text-[10px] text-slate-500 font-medium">ID: <span className="font-bold text-slate-700">{r.seq_id || r['ID Number'] || 'N/A'}</span></div>
-                                        <div className="text-[9px] font-medium text-slate-600 bg-slate-50 p-1.5 rounded border border-slate-100 whitespace-nowrap overflow-hidden text-ellipsis">{r.school_name || r['School'] || 'Unknown School'}</div>
+                                        <div className="text-[10px] text-slate-500 font-medium">ID Number: <span className="font-bold text-slate-700">{canonicalId}</span></div>
+                                        <div className="text-[9px] font-medium text-slate-600 bg-slate-50 p-1.5 rounded border border-slate-100 whitespace-nowrap overflow-hidden text-ellipsis">{r.school_name || r.schoolName || r.school || 'Unknown School'}</div>
                                         <div className="text-[9px] text-slate-400 flex items-center gap-1"><Clock className="w-3 h-3 flex-shrink-0" /> {r.created_at ? new Date(r.created_at).toLocaleString() : 'N/A'}</div>
                                       </div>
                                     </label>
@@ -5111,14 +5252,26 @@ function formatExamDates(dateStrings: string[]): string {
                       </div>
 
                       <div className="flex-1 space-y-6">
-                        <h5 className="font-bold text-rose-600 mb-3 text-xs uppercase flex items-center gap-1.5 bg-rose-50 p-2 rounded-lg"><AlertCircle className="w-4 h-4"/> Shared ID Numbers ({duplicateIds.length} groups)</h5>
+                        <div className="flex items-center justify-between bg-rose-50 p-2.5 rounded-lg border border-rose-200">
+                          <h5 className="font-bold text-rose-800 text-xs uppercase flex items-center gap-1.5"><AlertCircle className="w-4 h-4 text-rose-600"/> Shared ID Numbers ({duplicateIds.length} groups)</h5>
+                          {duplicateIds.length > 0 && (
+                            <button
+                              onClick={() => setDuplicateConfirmModal({ open: true, mode: 'shared_ids' })}
+                              className="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-[10px] font-bold uppercase tracking-wider transition-colors shadow-xs flex items-center gap-1"
+                            >
+                              Resolve Shared IDs ({duplicateIds.length})
+                            </button>
+                          )}
+                        </div>
                         {duplicateIds.length === 0 ? <p className="text-xs text-slate-500 italic pl-2">No shared ID numbers found.</p> : (
                           <div className="space-y-3">
-                            {duplicateIds.map((group, idx) => (
+                            {duplicateIds.map((group, idx) => {
+                              const groupCanonicalId = group[0]?._canonicalId || getCanonicalIdNumber(group[0]) || 'Shared ID';
+                              return (
                               <div key={idx} className="border border-rose-200 rounded-xl overflow-hidden shadow-sm">
-                                <div className="bg-rose-50 px-3 py-2 border-b border-rose-200 font-bold text-rose-800 text-xs flex justify-between">
+                                <div className="bg-rose-50 px-3 py-2 border-b border-rose-200 font-bold text-rose-800 text-xs flex justify-between items-center">
                                   <span className="flex items-center gap-1">
-                                    ID: {group[0]?.seq_id}
+                                    ID: {groupCanonicalId}
                                     <span title="These entries share the same ID number and may refer to the same student. Please select the correct record to keep.">
                                       <HelpCircle className="w-3 h-3 text-rose-500 cursor-help" />
                                     </span>
@@ -5127,6 +5280,8 @@ function formatExamDates(dateStrings: string[]): string {
                                 </div>
                                 <div className="p-3 bg-white flex flex-col xl:flex-row gap-3 overflow-x-auto">
                                   {group.map((r: any, i: number) => {
+                                    const canonical = r._canonical || getCanonicalFullName(r);
+                                    const canonicalId = r._canonicalId || getCanonicalIdNumber(r) || groupCanonicalId;
                                     const roleStr = String(r?.role || r?.userRole || r?.accountType || 'Reviewee').toLowerCase().replace(/[\s\-_]/g, '');
                                     const roleWeight = (roleStr === 'admin' || roleStr === 'superadmin' || roleStr === 'owner') ? 3 : (roleStr === 'staff' || roleStr === 'coadmin' || roleStr === 'instructor' || roleStr === 'encoder') ? 2 : 1;
                                     const maxGroupWeight = Math.max(...group.map((item: any) => {
@@ -5166,26 +5321,34 @@ function formatExamDates(dateStrings: string[]): string {
                                         </div>
 
                                         <div>
-                                          <div className="text-xs font-black text-slate-800 capitalize">
-                                            {String(r.last_name || r.lastName || r['Last Name'] || '').toLowerCase()}, {String(r.first_name || r.firstName || r['First Name'] || '').toLowerCase()}
+                                          <div className="text-xs font-black text-slate-800">
+                                            {canonical.displayName}
                                           </div>
                                         </div>
 
                                         <div className="text-[10px] text-slate-600 bg-slate-50 p-2 rounded-lg border border-slate-100 space-y-1">
-                                          <div className="flex justify-between"><span className="font-semibold text-slate-400">First:</span> <span className="font-bold text-slate-800 capitalize">{r.first_name || r.firstName || r['First Name'] || 'N/A'}</span></div>
-                                          <div className="flex justify-between"><span className="font-semibold text-slate-400">Middle:</span> <span className="font-bold text-slate-800 capitalize">{formatMiddleName(r.middle_name || r.middleName || r['Middle Name'])}</span></div>
-                                          <div className="flex justify-between"><span className="font-semibold text-slate-400">Last:</span> <span className="font-bold text-slate-800 capitalize">{r.last_name || r.lastName || r['Last Name'] || 'N/A'}</span></div>
+                                          <div className="flex justify-between"><span className="font-semibold text-slate-400">First:</span> <span className="font-bold text-slate-800">{canonical.firstName || 'N/A'}</span></div>
+                                          <div className="flex justify-between"><span className="font-semibold text-slate-400">Middle:</span> <span className="font-bold text-slate-800">{formatMiddleName(canonical.middleName)}</span></div>
+                                          <div className="flex justify-between"><span className="font-semibold text-slate-400">Last:</span> <span className="font-bold text-slate-800">{canonical.lastName || 'N/A'}</span></div>
+                                          {(r._canonicalBirthdate || getCanonicalBirthdate(r)) && (
+                                            <div className="flex justify-between border-t border-slate-200/60 pt-1 mt-1"><span className="font-semibold text-slate-400">Birthdate:</span> <span className="font-bold text-slate-800">{r._canonicalBirthdate || getCanonicalBirthdate(r)}</span></div>
+                                          )}
+                                          {((r._canonicalContact?.phone || getCanonicalContactInfo(r).phone) || (r._canonicalContact?.email || getCanonicalContactInfo(r).email)) && (
+                                            <div className="flex justify-between border-t border-slate-200/60 pt-1 mt-1"><span className="font-semibold text-slate-400">Contact:</span> <span className="font-bold text-slate-800 truncate max-w-[120px]">{[r._canonicalContact?.email || getCanonicalContactInfo(r).email, r._canonicalContact?.phone || getCanonicalContactInfo(r).phone].filter(Boolean).join(' | ')}</span></div>
+                                          )}
                                         </div>
 
-                                        <div className="text-[9px] font-medium text-slate-600 bg-slate-50 p-1.5 rounded border border-slate-100 whitespace-nowrap overflow-hidden text-ellipsis">{r.school_name || r['School'] || 'Unknown School'}</div>
-                                        <div className="text-[9px] text-slate-400 flex items-center gap-1"><Clock className="w-3 h-3 flex-shrink-0" /> {new Date(r.created_at).toLocaleString()}</div>
+                                        <div className="text-[10px] text-slate-500 font-medium">ID Number: <span className="font-bold text-slate-700">{canonicalId}</span></div>
+                                        <div className="text-[9px] font-medium text-slate-600 bg-slate-50 p-1.5 rounded border border-slate-100 whitespace-nowrap overflow-hidden text-ellipsis">{r.school_name || r.schoolName || r.school || 'Unknown School'}</div>
+                                        <div className="text-[9px] text-slate-400 flex items-center gap-1"><Clock className="w-3 h-3 flex-shrink-0" /> {r.created_at ? new Date(r.created_at).toLocaleString() : 'N/A'}</div>
                                       </div>
                                     </label>
                                   );
                                   })}
                                 </div>
                               </div>
-                            ))}
+                            );
+                            })}
                           </div>
                         )}
                       </div>
@@ -5199,33 +5362,204 @@ function formatExamDates(dateStrings: string[]): string {
                   </div>
                 )}
 
-                 <div className="pt-4 border-t border-slate-100 flex justify-between items-center mt-4">
-                  <div className="text-xs text-slate-500 max-w-[200px] text-left leading-tight">
-                    Select the correct records to keep above. Unselected items in those groups will be deleted.
+                 <div className="pt-4 border-t border-slate-100 flex flex-wrap justify-between items-center mt-4 gap-3">
+                  <div className="text-xs text-slate-500 max-w-[240px] text-left leading-tight">
+                    Select records to preserve in each group. Unselected items will be merged and safely removed.
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
                     <button
                       onClick={() => {
                         setShowDuplicates(false);
                         setConfirmResolve(false);
                         setResolveMessage(null);
                       }}
-                      className="px-5 py-2 border border-slate-200 text-xs font-semibold text-slate-600 rounded-xl hover:bg-slate-50 hover:text-slate-900 transition-colors"
+                      className="px-4 py-2 border border-slate-200 text-xs font-semibold text-slate-600 rounded-xl hover:bg-slate-50 hover:text-slate-900 transition-colors"
                     >
                       Cancel
                     </button>
-                    {(duplicateIds.length > 0 || similarNames.length > 0) && (
+                    {duplicateIds.length > 0 && (
                       <button
-                        onClick={handleResolveDuplicates}
+                        onClick={() => setDuplicateConfirmModal({ open: true, mode: 'shared_ids' })}
                         disabled={resolvingDuplicates}
-                        className={`px-5 py-2 text-white text-xs font-semibold rounded-xl transition-colors disabled:opacity-50 flex items-center gap-2 ${confirmResolve ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'}`}
+                        className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold rounded-xl transition-colors disabled:opacity-50 flex items-center gap-1.5"
                       >
-                        {resolvingDuplicates && <Loader2 className="w-3.5 h-3.5 animate-spin"/>}
-                        {confirmResolve ? 'Confirm Delete' : 'Resolve'}
+                        Resolve Shared IDs ({duplicateIds.length})
+                      </button>
+                    )}
+                    {similarNames.length > 0 && (
+                      <button
+                        onClick={() => setDuplicateConfirmModal({ open: true, mode: 'names' })}
+                        disabled={resolvingDuplicates}
+                        className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold rounded-xl transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                      >
+                        Resolve Names ({similarNames.length})
+                      </button>
+                    )}
+                    {(duplicateIds.length > 0 && similarNames.length > 0) && (
+                      <button
+                        onClick={() => setDuplicateConfirmModal({ open: true, mode: 'all' })}
+                        disabled={resolvingDuplicates}
+                        className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-xl transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                      >
+                        Resolve All ({duplicateIds.length + similarNames.length})
                       </button>
                     )}
                   </div>
                 </div>
+
+                {/* Separate Confirmation Modal for Duplicate Resolution */}
+                {duplicateConfirmModal?.open && (
+                  <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+                    <div className="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl border border-slate-200 flex flex-col max-h-[85vh] animate-in fade-in zoom-in-95 duration-150">
+                      <div className="flex justify-between items-center pb-4 border-b border-slate-100">
+                        <div className="flex items-center gap-2">
+                          {duplicateConfirmModal.mode === 'shared_ids' && <AlertCircle className="w-5 h-5 text-rose-600" />}
+                          {duplicateConfirmModal.mode === 'names' && <CheckCircle2 className="w-5 h-5 text-amber-600" />}
+                          {duplicateConfirmModal.mode === 'all' && <AlertTriangle className="w-5 h-5 text-blue-600" />}
+                          <h3 className="font-extrabold text-slate-900 text-base">
+                            {duplicateConfirmModal.mode === 'shared_ids' && 'Confirm Resolution of Shared ID Numbers'}
+                            {duplicateConfirmModal.mode === 'names' && 'Confirm Resolution of Duplicate Names'}
+                            {duplicateConfirmModal.mode === 'all' && 'Confirm Resolution of All Duplicates'}
+                          </h3>
+                        </div>
+                        <button
+                          onClick={() => setDuplicateConfirmModal(null)}
+                          className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition-colors"
+                        >
+                          <X className="w-5 h-5" />
+                        </button>
+                      </div>
+
+                      <div className="py-4 overflow-y-auto space-y-4 text-xs text-slate-600 flex-1">
+                        <p className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-slate-700 font-medium">
+                          {duplicateConfirmModal.mode === 'shared_ids' && 'The selected profile in each Shared ID group will be preserved. Unselected profiles sharing the same ID number will be merged and removed.'}
+                          {duplicateConfirmModal.mode === 'names' && 'The selected profile in each Duplicate Name group will be preserved. Unselected duplicate profiles will be merged and removed.'}
+                          {duplicateConfirmModal.mode === 'all' && 'All selected profiles across Shared IDs and Name Groups will be preserved. Unselected duplicate profiles will be merged and removed.'}
+                        </p>
+
+                        {(duplicateConfirmModal.mode === 'shared_ids' || duplicateConfirmModal.mode === 'all') && duplicateIds.length > 0 && (
+                          <div className="space-y-2">
+                            <h4 className="font-bold text-rose-700 uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+                              <AlertCircle className="w-3.5 h-3.5" /> Shared ID Groups ({duplicateIds.length})
+                            </h4>
+                            <div className="space-y-2">
+                              {duplicateIds.map((group, idx) => {
+                                 const keepIds = selectionsToKeep[`id_${idx}`] || [];
+                                const keepDocId = keepIds[0];
+                                const keptRec = keepDocId ? group.find((r: any) => (r.doc_id || r.id || r.uid || r.docId) === keepDocId) : null;
+                                const deleteRecs = keptRec ? group.filter((r: any) => (r.doc_id || r.id || r.uid || r.docId) !== keepDocId) : [];
+                                const canonicalId = group[0]?._canonicalId || getCanonicalIdNumber(group[0]) || 'Shared ID';
+
+                                return (
+                                  <div key={idx} className="p-3 bg-rose-50/60 border border-rose-200 rounded-xl space-y-1.5">
+                                    <div className="font-bold text-rose-900 flex justify-between">
+                                      <span>ID Number: {canonicalId}</span>
+                                      <span className="text-[10px] text-rose-700">{group.length} profiles</span>
+                                    </div>
+                                    {keptRec ? (
+                                      <div className="text-emerald-800 font-semibold bg-emerald-50 px-2.5 py-1.5 rounded-lg border border-emerald-200 flex items-center justify-between text-xs">
+                                        <span>KEEP: {(keptRec._canonical || getCanonicalFullName(keptRec)).displayName} ({keptRec.school_name || keptRec.schoolName || 'No school'})</span>
+                                        <span className="text-[10px] font-bold bg-emerald-600 text-white px-2 py-0.5 rounded-md shrink-0 ml-2">Preserved</span>
+                                      </div>
+                                    ) : (
+                                      <div className="text-amber-800 italic bg-amber-50 px-2.5 py-1.5 rounded-lg border border-amber-200 text-xs font-semibold">
+                                        ⚠️ No record selected to keep — this group will be skipped (no profiles merged or deleted).
+                                      </div>
+                                    )}
+                                    {deleteRecs.length > 0 && (
+                                      <div className="text-rose-700 text-[11px] pl-2 border-l-2 border-rose-300 pt-0.5">
+                                        <span className="font-bold">MERGE & DELETE:</span>{' '}
+                                        {deleteRecs.map((d: any) => (d._canonical || getCanonicalFullName(d)).displayName).join(', ')}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+
+                        {(duplicateConfirmModal.mode === 'names' || duplicateConfirmModal.mode === 'all') && similarNames.length > 0 && (
+                          <div className="space-y-2 pt-2">
+                            <h4 className="font-bold text-amber-700 uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+                              <CheckCircle2 className="w-3.5 h-3.5" /> Name Duplicate Groups ({similarNames.length})
+                            </h4>
+                            <div className="space-y-2">
+                              {similarNames.map((group, idx) => {
+                                 const keepIds = selectionsToKeep[`name_${idx}`] || [];
+                                const keepDocId = keepIds[0];
+                                const keptRec = keepDocId ? group.find((r: any) => (r.doc_id || r.id || r.uid || r.docId) === keepDocId) : null;
+                                const deleteRecs = keptRec ? group.filter((r: any) => (r.doc_id || r.id || r.uid || r.docId) !== keepDocId) : [];
+                                const canonicalName = (group[0]?._canonical || getCanonicalFullName(group[0])).displayName;
+
+                                return (
+                                  <div key={idx} className="p-3 bg-amber-50/60 border border-amber-200 rounded-xl space-y-1.5">
+                                    <div className="font-bold text-amber-900 flex justify-between items-center">
+                                      <span>Name: {canonicalName}</span>
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-[10px] text-amber-700">{group.length} profiles</span>
+                                        {!keptRec && (
+                                          <button
+                                            type="button"
+                                            onClick={() => handleRemoveNameGroup(idx)}
+                                            className="text-[10px] bg-amber-200 hover:bg-amber-300 text-amber-900 font-bold px-2 py-0.5 rounded transition-colors cursor-pointer"
+                                          >
+                                            Remove Group (Correct)
+                                          </button>
+                                        )}
+                                      </div>
+                                    </div>
+                                    {keptRec ? (
+                                      <div className="text-emerald-800 font-semibold bg-emerald-50 px-2.5 py-1.5 rounded-lg border border-emerald-200 flex items-center justify-between text-xs">
+                                        <span>KEEP: {(keptRec._canonical || getCanonicalFullName(keptRec)).displayName} ({keptRec.school_name || keptRec.schoolName || 'No school'})</span>
+                                        <span className="text-[10px] font-bold bg-emerald-600 text-white px-2 py-0.5 rounded-md shrink-0 ml-2">Preserved</span>
+                                      </div>
+                                    ) : (
+                                      <div className="text-emerald-800 italic bg-emerald-50 px-2.5 py-1.5 rounded-lg border border-emerald-200 text-xs font-semibold">
+                                        ✅ No name selected — Names are correct (no need to correct). Group will be skipped & removed.
+                                      </div>
+                                    )}
+                                    {deleteRecs.length > 0 && (
+                                      <div className="text-amber-800 text-[11px] pl-2 border-l-2 border-amber-300 pt-0.5">
+                                        <span className="font-bold">MERGE & DELETE:</span>{' '}
+                                        {deleteRecs.map((d: any) => (d._canonical || getCanonicalFullName(d)).displayName).join(', ')}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="pt-4 border-t border-slate-100 flex justify-end gap-3 mt-2">
+                        <button
+                          onClick={() => setDuplicateConfirmModal(null)}
+                          className="px-4 py-2 border border-slate-200 text-slate-600 font-semibold rounded-xl hover:bg-slate-50 transition-colors"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={() => handleResolveDuplicates(duplicateConfirmModal.mode)}
+                          disabled={resolvingDuplicates}
+                          className={`px-5 py-2 text-white font-bold rounded-xl transition-all disabled:opacity-50 flex items-center gap-2 shadow-xs ${
+                            duplicateConfirmModal.mode === 'shared_ids'
+                              ? 'bg-rose-600 hover:bg-rose-700'
+                              : duplicateConfirmModal.mode === 'names'
+                              ? 'bg-amber-600 hover:bg-amber-700'
+                              : 'bg-blue-600 hover:bg-blue-700'
+                          }`}
+                        >
+                          {resolvingDuplicates && <Loader2 className="w-4 h-4 animate-spin" />}
+                          {duplicateConfirmModal.mode === 'shared_ids' && 'Confirm & Delete Shared ID Duplicates'}
+                          {duplicateConfirmModal.mode === 'names' && 'Confirm & Delete Name Duplicates'}
+                          {duplicateConfirmModal.mode === 'all' && 'Confirm & Delete All Duplicates'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             ) : (
               <div className="space-y-6 text-sm">

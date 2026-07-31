@@ -1,6 +1,6 @@
 {
   "name": "SRC Score Management System",
-  "description": "A web-based registration app via QR code with sequential ID generation",
+  "description": "Samaritan Review Center (SRC) Score Management System used by Admin, Staff, and Reviewees to manage, synchronize, and track board review exam scores and folders in real time.",
   "requestFramePermissions": [
     "camera",
     "microphone"
