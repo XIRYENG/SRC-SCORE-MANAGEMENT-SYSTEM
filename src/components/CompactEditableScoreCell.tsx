@@ -125,8 +125,10 @@ export type CompactEditableScoreCellProps = {
     subject: string;
     currentScore: number | null;
     possiblePoints?: number;
+    event?: any;
   }) => void;
   overrideScore?: ScoreValue;
+  event?: any;
 };
 
 export function CompactEditableScoreCell({
@@ -137,6 +139,7 @@ export function CompactEditableScoreCell({
   canEditScores,
   onEdit,
   overrideScore,
+  event,
 }: CompactEditableScoreCellProps) {
   const detailedScore = overrideScore || getResolvedDetailedScore(reviewee, category, subject);
 
@@ -166,6 +169,7 @@ export function CompactEditableScoreCell({
           subject,
           currentScore: detailedScore.earnedScore,
           possiblePoints: detailedScore.possiblePoints,
+          event,
         })
       }
     />

@@ -270,7 +270,7 @@ export function normalizeHeader(value: string): string {
     .replace(/\s+/g, " ");
 }
 
-export function extractCsvRowData(row: Record<string, any>) {
+export function extractCsvRowData(row: Record<string, any>, subject?: string) {
   const getVal = (possibleKeys: string[]): string => {
     for (const k of Object.keys(row)) {
       const cleanK = normalizeHeader(k).replace(/[^a-z0-9]/g, '');
@@ -290,7 +290,36 @@ export function extractCsvRowData(row: Record<string, any>) {
   let csvLast = getVal(['student last name', 'last name', 'lastname', 'lname', 'last', 'surname', 'family name']);
   const fullName = getVal(['student name', 'full name', 'name', 'student', 'reviewee name', 'revieweename']);
   const csvStudentId = getVal(['student id', 'studentid', 'customid', 'zipgradeid', 'zipgrade id', 'externalid', 'seqid', 'seq id', 'id', 'idnumber', 'student_id', 'pin']);
-  let rawEarned = getVal(['earned points', 'earnedpoints', 'earnedpts', 'earned pts', 'pointsearned', 'earned', 'points', 'score', 'totalscore', 'total score', 'rawscore']);
+  
+  // Dynamic Score Column Matching Strategy
+  let rawEarned = '';
+  
+  if (subject) {
+    const subjKey = normalizeScoreSubject(subject).replace(/[^a-z0-9]/g, '');
+    
+    // 1. Try exact subject matches first (e.g., "clj", "clj score", "score clj")
+    rawEarned = getVal([subjKey, `${subjKey} score`, `score ${subjKey}`, `${subjKey} points`, `${subjKey} pts`, `${subjKey} total`]);
+    
+    // 2. Try substring match for the subject
+    if (!rawEarned) {
+      for (const k of Object.keys(row)) {
+        const cleanK = normalizeHeader(k).replace(/[^a-z0-9]/g, '');
+        if (cleanK.includes(subjKey)) {
+          const val = row[k];
+          if (val !== undefined && val !== null && String(val).trim() !== '') {
+            rawEarned = String(val).trim();
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  // 3. Fallback to generic score columns
+  if (!rawEarned) {
+    rawEarned = getVal(['earned points', 'earnedpoints', 'earnedpts', 'earned pts', 'pointsearned', 'earned', 'points', 'score', 'totalscore', 'total score', 'rawscore']);
+  }
+
   let rawPossible = getVal(['possible points', 'possiblepoints', 'possiblepts', 'possible pts', 'total points', 'total score', 'max score', 'maxscore']);
 
   if ((!csvFirst || !csvLast) && fullName) {
@@ -431,7 +460,7 @@ export function processCsvRows(
   // 4. Pre-scan for Duplicate CSV IDs
   const csvIdCounts = new Map<string, number>();
   for (const row of csvData) {
-    const extracted = extractCsvRowData(row);
+    const extracted = extractCsvRowData(row, selectedSubject);
     const normId = normalizeStudentId(extracted.csvStudentId);
     if (normId) {
       csvIdCounts.set(normId, (csvIdCounts.get(normId) || 0) + 1);
@@ -455,7 +484,7 @@ export function processCsvRows(
     const row = csvData[idx];
     const rowNum = idx + 1;
 
-    const extracted = extractCsvRowData(row);
+    const extracted = extractCsvRowData(row, selectedSubject);
     const csvFirst = extracted.csvFirst;
     const csvLast = extracted.csvLast;
     const csvStudentId = extracted.csvStudentId;

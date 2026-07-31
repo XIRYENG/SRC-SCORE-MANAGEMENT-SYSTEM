@@ -11,7 +11,7 @@ import { useScoreFolders } from '../../hooks/useScoreFolders';
 import { isRevieweeInFolderScope, formatFolderScopeDisplay } from '../../utils/folderScope';
 import { CompactEditableScoreCell } from '../CompactEditableScoreCell';
 import { firestoreDb } from '../../utils/firebaseClient';
-import { doc, updateDoc, serverTimestamp, collection, query, onSnapshot, writeBatch, deleteField } from 'firebase/firestore';
+import { doc, updateDoc, setDoc, serverTimestamp, collection, query, onSnapshot, writeBatch, deleteField } from 'firebase/firestore';
 import { getCanonicalFullName } from '../../utils/nameNormalization';
 import { getSubjectsByArea, MajorAreaCode } from '../../config/criminologyCurriculum';
 import { DailyEvaluationRevieweeMatrix, DailyEvalRevieweeRow } from '../score-management/DailyEvaluationRevieweeMatrix';
@@ -2198,6 +2198,7 @@ export function ScoreManagementDashboard({ onViewDetails, onOpenUploadModal, onO
                                   isAreaActivated={true}
                                   canEditScores={true}
                                   onEdit={handleEditScoreClick}
+                                  event={col.scoreEvent}
                                   overrideScore={{
                                     earnedScore: s.score,
                                     possiblePoints: s.total
