@@ -68,7 +68,7 @@ try {
     auth = getAuth(app);
     
     // Initialize Firestore once with recommended settings
-    const forceLongPolling = import.meta.env.VITE_FIRESTORE_FORCE_LONG_POLLING === "true";
+    const forceLongPolling = import.meta.env.VITE_FIRESTORE_FORCE_LONG_POLLING !== "false";
     
     try {
       db = initializeFirestore(app, {

@@ -1072,7 +1072,7 @@ export const ScoreImporter: React.FC<ScoreImporterProps> = ({
               updated_at: new Date().toISOString()
             };
 
-            await updateDoc(userRef, updatePayload);
+            await setDoc(userRef, updatePayload, { merge: true });
 
             // 3. Activity log
             const logRef = doc(collection(firestoreDb, 'activity_logs'));

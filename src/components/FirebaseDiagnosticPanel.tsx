@@ -17,6 +17,22 @@ type FirebaseErrorLog = {
 
 let globalErrorListeners: ((error: FirebaseErrorLog) => void)[] = [];
 
+// Intercept console warnings to catch Firestore stream drops
+const originalConsoleWarn = console.warn;
+console.warn = function (...args) {
+  originalConsoleWarn.apply(console, args);
+  const msg = args.join(' ');
+  if (msg.includes('@firebase/firestore') || msg.includes('WebChannelConnection') || msg.includes('transport errored')) {
+    const errLog: FirebaseErrorLog = {
+      id: Math.random().toString(36).substring(2, 9),
+      timestamp: new Date().toLocaleTimeString(),
+      type: 'firestore',
+      message: msg,
+    };
+    globalErrorListeners.forEach(listener => listener(errLog));
+  }
+};
+
 export function logFirebaseError(error: any, type: FirebaseErrorLog['type'] = 'general') {
   const errLog: FirebaseErrorLog = {
     id: Math.random().toString(36).substring(2, 9),
@@ -40,14 +56,21 @@ export function FirebaseDiagnosticPanel({ isOpen, onClose }: { isOpen: boolean; 
   const [pingMessage, setPingMessage] = useState<string>('');
   const [errorLogs, setErrorLogs] = useState<FirebaseErrorLog[]>([]);
   const [copied, setCopied] = useState(false);
+  const [streamHealth, setStreamHealth] = useState<'healthy' | 'degraded' | 'disconnected'>('healthy');
 
   useEffect(() => {
     // Refresh config inspection
     const evaluated = getFirebaseConfig();
     setConfigInfo(evaluated);
 
-    const handleOnline = () => setIsOnline(true);
-    const handleOffline = () => setIsOnline(false);
+    const handleOnline = () => {
+      setIsOnline(true);
+      setStreamHealth('healthy');
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+      setStreamHealth('disconnected');
+    };
 
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
@@ -55,6 +78,11 @@ export function FirebaseDiagnosticPanel({ isOpen, onClose }: { isOpen: boolean; 
     // Register error listener
     const errorListener = (newErr: FirebaseErrorLog) => {
       setErrorLogs(prev => [newErr, ...prev.slice(0, 49)]);
+      if (newErr.type === 'firestore' && (newErr.message.includes('WebChannelConnection') || newErr.message.includes('transport errored'))) {
+        setStreamHealth('degraded');
+        // Auto-recover visual state after 15s assuming it reconnected
+        setTimeout(() => setStreamHealth('healthy'), 15000);
+      }
     };
     globalErrorListeners.push(errorListener);
 
@@ -142,6 +170,18 @@ export function FirebaseDiagnosticPanel({ isOpen, onClose }: { isOpen: boolean; 
                 }`}>
                   {firebaseConfigured ? 'Configured & Active' : 'Configuration Error'}
                 </span>
+                
+                {/* Connection Status Bulb */}
+                <div className="flex items-center gap-1.5 ml-2" title={`Firestore Stream: ${streamHealth}`}>
+                  <div className={`w-2.5 h-2.5 rounded-full animate-pulse ${
+                    streamHealth === 'healthy' ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.8)]' :
+                    streamHealth === 'degraded' ? 'bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.8)]' :
+                    'bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.8)]'
+                  }`} />
+                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">
+                    {streamHealth}
+                  </span>
+                </div>
               </h2>
               <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
                 Real-time API key validation, network connectivity check, and error logging utility
